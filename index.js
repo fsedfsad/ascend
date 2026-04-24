@@ -164,42 +164,110 @@ function calculateMessageXP(content) {
   return base + lengthBonus;
 }
 
-// ─── DATA PERSISTENCE ──────────────────────────────────────────────────────────
-const DATA_PATH = process.env.DATA_PATH
-  ? path.resolve(process.env.DATA_PATH, 'xp_data.json')
-  : path.resolve(__dirname, 'xp_data.json');
+// ─── DATA PERSISTENCE — JSONBin.io (free, no disk needed) ─────────────────────
+//
+//  Sign up free at https://jsonbin.io → grab your Master Key
+//  Create TWO bins (one for XP, one for achievements) → grab both Bin IDs
+//  Set these 3 env vars in Render:
+//    JSONBIN_KEY   = your Master Key  (e.g. $2a$10$abc...)
+//    XP_BIN_ID     = bin ID for XP data  (e.g. 64af1234abc...)
+//    ACH_BIN_ID    = bin ID for achievements (e.g. 64af5678def...)
+//
+const JSONBIN_KEY  = process.env.JSONBIN_KEY  || '';
+const XP_BIN_ID   = process.env.XP_BIN_ID    || '';
+const ACH_BIN_ID  = process.env.ACH_BIN_ID   || '';
+const JSONBIN_BASE = 'api.jsonbin.io';
 
+if (!JSONBIN_KEY || !XP_BIN_ID || !ACH_BIN_ID) {
+  console.warn('┌─────────────────────────────────────────────────────────┐');
+  console.warn('│  WARNING: JSONBin env vars not set!                     │');
+  console.warn('│  Set JSONBIN_KEY, XP_BIN_ID, ACH_BIN_ID in Render.     │');
+  console.warn('│  Data will NOT persist across restarts until you do.    │');
+  console.warn('└─────────────────────────────────────────────────────────┘');
+}
+
+// Low-level JSONBin GET/PUT
+function jsonbinGet(binId) {
+  return new Promise((resolve) => {
+    const options = {
+      hostname: JSONBIN_BASE,
+      path: `/v3/b/${binId}/latest`,
+      method: 'GET',
+      headers: { 'X-Master-Key': JSONBIN_KEY },
+    };
+    const req = https.request(options, (res) => {
+      let body = '';
+      res.on('data', d => body += d);
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(body);
+          resolve(parsed?.record ?? null);
+        } catch { resolve(null); }
+      });
+    });
+    req.setTimeout(8000, () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
+    req.end();
+  });
+}
+
+function jsonbinPut(binId, data) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify(data);
+    const options = {
+      hostname: JSONBIN_BASE,
+      path: `/v3/b/${binId}`,
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'X-Master-Key': JSONBIN_KEY,
+        'X-Bin-Versioning': 'false', // don't keep old versions, saves quota
+      },
+    };
+    const req = https.request(options, (res) => {
+      let out = '';
+      res.on('data', d => out += d);
+      res.on('end', () => resolve(true));
+    });
+    req.setTimeout(8000, () => { req.destroy(); resolve(false); });
+    req.on('error', () => resolve(false));
+    req.write(body);
+    req.end();
+  });
+}
+
+// ── XP DATA ────────────────────────────────────────────────────────────────────
 let xpData = {};
+let _xpSaveTimer = null;
 
-function loadXpData() {
-  try {
-    if (fs.existsSync(DATA_PATH)) {
-      xpData = JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
-      console.log(`[XP] Loaded ${Object.keys(xpData).length} users from ${DATA_PATH}`);
-    }
-  } catch (err) {
-    console.error('[XP] Load failed:', err);
-    xpData = {};
+async function loadXpData() {
+  if (!XP_BIN_ID) { console.log('[XP] No XP_BIN_ID — starting fresh (not persisted)'); return; }
+  console.log('[XP] Loading from JSONBin...');
+  const record = await jsonbinGet(XP_BIN_ID);
+  if (record && typeof record === 'object') {
+    xpData = record;
+    console.log(`[XP] Loaded ${Object.keys(xpData).length} users`);
+  } else {
+    console.log('[XP] No existing data — starting fresh');
   }
 }
 
-let _savePending = false;
 function saveXpData() {
-  if (_savePending) return;
-  _savePending = true;
-  setImmediate(() => {
-    _savePending = false;
-    try { fs.writeFileSync(DATA_PATH, JSON.stringify(xpData, null, 2)); }
-    catch (err) { console.error('[XP] Save failed:', err); }
-  });
+  if (!XP_BIN_ID) return;
+  // Debounce — wait 10 s after last change before writing, to batch rapid XP gains
+  if (_xpSaveTimer) clearTimeout(_xpSaveTimer);
+  _xpSaveTimer = setTimeout(async () => {
+    const ok = await jsonbinPut(XP_BIN_ID, xpData);
+    if (ok) console.log(`[XP] Saved ${Object.keys(xpData).length} users to JSONBin`);
+    else    console.error('[XP] Save failed — will retry on next change');
+  }, 10_000);
 }
 
 function getUserData(userId) {
   if (!xpData[userId]) xpData[userId] = { xp: 0, level: 0 };
   return xpData[userId];
 }
-
-loadXpData();
 
 // ─── ACHIEVEMENTS ──────────────────────────────────────────────────────────────
 // { id, emoji, name, description, trigger }
@@ -228,36 +296,33 @@ const CHANNEL_ACHIEVEMENTS = {
 // Thread category for Thread Master achievement
 const THREAD_ACHIEVEMENT_CATEGORY = '1471066298703282238';
 
-// achievements persisted alongside XP
-const ACH_PATH = process.env.DATA_PATH
-  ? path.resolve(process.env.DATA_PATH, 'achievements.json')
-  : path.resolve(__dirname, 'achievements.json');
+// ── ACHIEVEMENT DATA ────────────────────────────────────────────────────────────
+let achData = {}; // { [userId]: Set of achievement ids }
+let _achSaveTimer = null;
 
-let achData = {}; // { [userId]: Set of achievement ids (stored as array) }
-
-function loadAchData() {
-  try {
-    if (fs.existsSync(ACH_PATH)) {
-      const raw = JSON.parse(fs.readFileSync(ACH_PATH, 'utf8'));
-      for (const [uid, ids] of Object.entries(raw))
-        achData[uid] = new Set(ids);
-      console.log(`[ACH] Loaded achievements for ${Object.keys(achData).length} users`);
-    }
-  } catch (err) { console.error('[ACH] Load failed:', err); achData = {}; }
+async function loadAchData() {
+  if (!ACH_BIN_ID) { console.log('[ACH] No ACH_BIN_ID — starting fresh (not persisted)'); return; }
+  console.log('[ACH] Loading from JSONBin...');
+  const record = await jsonbinGet(ACH_BIN_ID);
+  if (record && typeof record === 'object') {
+    for (const [uid, ids] of Object.entries(record))
+      achData[uid] = new Set(Array.isArray(ids) ? ids : []);
+    console.log(`[ACH] Loaded achievements for ${Object.keys(achData).length} users`);
+  } else {
+    console.log('[ACH] No existing data — starting fresh');
+  }
 }
 
-let _achSavePending = false;
 function saveAchData() {
-  if (_achSavePending) return;
-  _achSavePending = true;
-  setImmediate(() => {
-    _achSavePending = false;
-    try {
-      const out = {};
-      for (const [uid, set] of Object.entries(achData)) out[uid] = [...set];
-      fs.writeFileSync(ACH_PATH, JSON.stringify(out, null, 2));
-    } catch (err) { console.error('[ACH] Save failed:', err); }
-  });
+  if (!ACH_BIN_ID) return;
+  if (_achSaveTimer) clearTimeout(_achSaveTimer);
+  _achSaveTimer = setTimeout(async () => {
+    const out = {};
+    for (const [uid, set] of Object.entries(achData)) out[uid] = [...set];
+    const ok = await jsonbinPut(ACH_BIN_ID, out);
+    if (ok) console.log('[ACH] Saved to JSONBin');
+    else    console.error('[ACH] Save failed');
+  }, 10_000);
 }
 
 function getUserAch(userId) {
@@ -307,8 +372,6 @@ async function checkLevelAchievements(userId, level, guild) {
   if (levelAch[level]) await grantAchievement(userId, levelAch[level], guild);
 }
 
-loadAchData();
-
 // ─── FONTS ─────────────────────────────────────────────────────────────────────
 // Priority: ./fonts/ (committed to repo) → system Liberation → system DejaVu
 (function registerFonts() {
@@ -350,7 +413,7 @@ loadAchData();
 })();
 
 // ─── CARD HELPERS ──────────────────────────────────────────────────────────────
-// Fetch image bytes without hanging (10 s timeout)
+// Fetch image bytes — hard 5 s timeout so a slow CDN never blocks the interaction
 function fetchBuf(url) {
   return new Promise((resolve) => {
     const lib = url.startsWith('https') ? https : http;
@@ -362,7 +425,7 @@ function fetchBuf(url) {
       res.on('end',  () => resolve(Buffer.concat(chunks)));
       res.on('error',() => resolve(null));
     });
-    req.setTimeout(10000, () => { req.destroy(); resolve(null); });
+    req.setTimeout(5000, () => { req.destroy(); resolve(null); });
     req.on('error', () => resolve(null));
   });
 }
@@ -371,7 +434,7 @@ async function safeAvatar(url) {
   if (!url) return null;
   try {
     const buf = await fetchBuf(url);
-    return buf ? await loadImage(buf) : null;
+    return buf && buf.length > 0 ? await loadImage(buf) : null;
   } catch { return null; }
 }
 
@@ -642,6 +705,10 @@ function downloadBuffer(url) {
 // ─── READY ─────────────────────────────────────────────────────────────────────
 client.once('ready', async () => {
   console.log(`[Bot] Logged in as ${client.user.tag}`);
+
+  // Load persisted data first — everything else depends on this
+  await loadXpData();
+  await loadAchData();
 
   // Register slash commands
   try {
@@ -1276,43 +1343,63 @@ client.on('interactionCreate', async (interaction) => {
 
     // ── /level ──
     } else if (interaction.commandName === 'level') {
+      // Defer FIRST — before any async work — Discord requires acknowledgement within 3s
       await interaction.deferReply({ ephemeral: true });
-      const target = interaction.options.getUser('member') || interaction.user;
-      const data   = getUserData(target.id);
+
+      const target  = interaction.options.getUser('member') || interaction.user;
+      const data    = getUserData(target.id);
       const { level, currentXP, neededXP } = parseLevelData(data.xp || 0);
       const totalXP = data.xp || 0;
 
-      const sorted = Object.entries(xpData).sort(([,a],[,b]) => (b.xp||0) - (a.xp||0));
-      const rank   = sorted.findIndex(([id]) => id === target.id) + 1 || sorted.length + 1;
+      const sorted   = Object.entries(xpData).sort(([,a],[,b]) => (b.xp||0) - (a.xp||0));
+      const rankIdx  = sorted.findIndex(([id]) => id === target.id);
+      const rank     = rankIdx === -1 ? sorted.length + 1 : rankIdx + 1;
 
       const member    = await interaction.guild.members.fetch(target.id).catch(() => null);
       const username  = member?.displayName || target.username;
-      const avatarUrl = target.displayAvatarURL({ extension: 'png', size: 256 });
+      // Use smaller avatar size and add ?size param to speed up fetch
+      const avatarUrl = target.displayAvatarURL({ extension: 'png', size: 128 });
 
       try {
-        const buf = await drawRankCard({ username, avatarUrl, level, rank, currentXP, neededXP, totalXP, guildName: interaction.guild.name });
+        const buf = await drawRankCard({
+          username, avatarUrl, level, rank,
+          currentXP, neededXP, totalXP,
+          guildName: interaction.guild.name,
+        });
         await interaction.editReply({ files: [new AttachmentBuilder(buf, { name: 'rank.png' })] });
       } catch (err) {
-        console.error('[/level]', err);
-        await interaction.editReply({ content: `**${username}** — Level **${level}** · Rank **#${rank}** · **${totalXP.toLocaleString()} XP**` });
+        console.error('[/level] card error:', err.message);
+        // Always fall back to text so the interaction isn't left hanging
+        await interaction.editReply({
+          content: `**${username}** — Level **${level}** · Rank **#${rank}** · **${totalXP.toLocaleString()} XP**`,
+        }).catch(() => null);
       }
 
     // ── /leaderboard ──
     } else if (interaction.commandName === 'leaderboard') {
+      // Defer FIRST
       await interaction.deferReply({ ephemeral: true });
-      const sorted = Object.entries(xpData).sort(([,a],[,b]) => (b.xp||0) - (a.xp||0)).slice(0, 10);
-      if (!sorted.length) return interaction.editReply({ content: 'No XP data yet!' });
 
-      const entries = await Promise.all(sorted.map(async ([userId, d]) => {
+      const sorted = Object.entries(xpData)
+        .sort(([,a],[,b]) => (b.xp||0) - (a.xp||0))
+        .slice(0, 10);
+
+      if (!sorted.length) {
+        return interaction.editReply({ content: 'No XP data yet!' });
+      }
+
+      // Fetch members sequentially to avoid hammering Discord's API
+      const entries = [];
+      for (const [userId, d] of sorted) {
         const member = await interaction.guild.members.fetch(userId).catch(() => null);
         const user   = member?.user || await client.users.fetch(userId).catch(() => null);
         const { level, currentXP, neededXP } = parseLevelData(d.xp || 0);
-        return {
+        entries.push({
           username:  member?.displayName || user?.username || 'Unknown',
           avatarUrl: user?.displayAvatarURL({ extension: 'png', size: 64 }) || '',
           level, totalXP: d.xp || 0, currentXP, neededXP,
-        };
-      }));
+        });
+      }
 
       try {
         const buf = await drawLeaderboard(entries);
@@ -1367,9 +1454,12 @@ client.on('interactionCreate', async (interaction) => {
 
   } catch (err) {
     console.error(`[Command] /${interaction.commandName}:`, err);
+    // Interaction may already be expired — try every possible reply method
     const m = { content: '<:cross:1479512858256478521> An error occurred.', ephemeral: true };
-    if (interaction.deferred || interaction.replied) await interaction.editReply(m).catch(() => {});
-    else await interaction.reply(m).catch(() => {});
+    try {
+      if (interaction.deferred || interaction.replied) await interaction.editReply(m);
+      else await interaction.reply(m);
+    } catch { /* interaction expired — nothing we can do */ }
   }
 });
 
@@ -1384,9 +1474,9 @@ console.log('  NODE_ENV:      ', process.env.NODE_ENV || '(not set)');
 console.log('  TOKEN set:     ', !!process.env.DISCORD_TOKEN);
 console.log('  CLIENT_ID:     ', process.env.CLIENT_ID || '(not set)');
 console.log('  GUILD_ID:      ', process.env.GUILD_ID  || '(not set — global cmds)');
-console.log('  DATA_PATH:     ', process.env.DATA_PATH || '(not set — using __dirname)');
-console.log('  xp_data path:  ', DATA_PATH);
-console.log('  ach_data path: ', ACH_PATH);
+console.log('  JSONBIN_KEY:   ', JSONBIN_KEY  ? '✓ set' : '✗ MISSING');
+console.log('  XP_BIN_ID:     ', XP_BIN_ID   ? '✓ set' : '✗ MISSING');
+console.log('  ACH_BIN_ID:    ', ACH_BIN_ID  ? '✓ set' : '✗ MISSING');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━');
 
 if (!process.env.DISCORD_TOKEN) {

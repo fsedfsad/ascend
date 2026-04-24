@@ -12,9 +12,10 @@ services:
         sync: false
       - key: GUILD_ID
         sync: false
-      - key: DATA_PATH
-        value: /data
-    disk:
-      name: ascend-bot-data
-      mountPath: /data
-      sizeGB: 1
+      - key: JSONBIN_KEY
+        sync: false
+      - key: XP_BIN_ID
+        sync: false
+      - key: ACH_BIN_ID
+        sync: false
+# No disk needed — data lives in JSONBin.io for free
