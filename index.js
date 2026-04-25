@@ -1473,3 +1473,4 @@ if (!process.env.DISCORD_TOKEN) {
 client.login(process.env.DISCORD_TOKEN)
   .then(() => console.log('[Bot] Login successful'))
   .catch(err => { console.error('[Bot] Login FAILED:', err.message); process.exit(1); });
+}
