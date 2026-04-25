@@ -129,19 +129,14 @@ const LEVEL_ROLES = {
 const MILESTONE_LEVELS = Object.keys(LEVEL_ROLES).map(Number).sort((a, b) => a - b);
 
 // ── XP math ────────────────────────────────────────────────────────────────────
-// XP to complete level N (go from level N to N+1)
 function xpToNextLevel(level) {
   return Math.floor(5 * Math.pow(level, 2) + 50 * level + 100);
 }
-
-// Total XP to *reach* a given level from 0
 function totalXPForLevel(level) {
   let t = 0;
   for (let i = 0; i < level; i++) t += xpToNextLevel(i);
   return t;
 }
-
-// Given raw total XP → { level, currentXP (within level), neededXP (to finish level) }
 function parseLevelData(totalXP) {
   let level = 0, remaining = totalXP || 0;
   while (true) {
@@ -151,10 +146,6 @@ function parseLevelData(totalXP) {
     level++;
   }
 }
-
-// ── MESSAGE XP ─────────────────────────────────────────────────────────────────
-// TEST MODE: every message grants exactly enough XP to reach the next level.
-// To revert, replace grantXP call in handleMessageXP with the commented line.
 const MSG_COOLDOWN_MS = 60 * 1000;
 const xpCooldowns    = new Map();
 
@@ -222,7 +213,7 @@ function jsonbinPut(binId, data) {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
         'X-Master-Key': JSONBIN_KEY,
-        'X-Bin-Versioning': 'false', // don't keep old versions, saves quota
+        'X-Bin-Versioning': 'false',
       },
     };
     const req = https.request(options, (res) => {
@@ -236,8 +227,6 @@ function jsonbinPut(binId, data) {
     req.end();
   });
 }
-
-// ── XP DATA ────────────────────────────────────────────────────────────────────
 let xpData = {};
 let _xpSaveTimer = null;
 
@@ -255,7 +244,6 @@ async function loadXpData() {
 
 function saveXpData() {
   if (!XP_BIN_ID) return;
-  // Debounce — wait 10 s after last change before writing, to batch rapid XP gains
   if (_xpSaveTimer) clearTimeout(_xpSaveTimer);
   _xpSaveTimer = setTimeout(async () => {
     const ok = await jsonbinPut(XP_BIN_ID, xpData);
@@ -270,8 +258,6 @@ function getUserData(userId) {
 }
 
 // ─── ACHIEVEMENTS ──────────────────────────────────────────────────────────────
-// { id, emoji, name, description, trigger }
-// triggers checked in code by id
 const ACHIEVEMENTS = [
   { id: 'testimonial',    emoji: '📝', name: 'Testimonial',      description: 'Wrote your first testimonial in the testimonials channel.' },
   { id: 'introduction',  emoji: '👋', name: 'Hello World',       description: 'Introduced yourself to the community.' },
@@ -284,19 +270,13 @@ const ACHIEVEMENTS = [
   { id: 'level_50',      emoji: '🔥', name: 'On Fire',           description: 'Reached level 50.' },
   { id: 'level_100',     emoji: '👑', name: 'Legend',            description: 'Reached level 100.' },
 ];
-
-// Channel → achievement id mapping for first-message achievements
 const CHANNEL_ACHIEVEMENTS = {
   '1462389447650967744': 'testimonial',
   '1462396052266156135': 'introduction',
   '1429961951097651261': 'first_win',
   '1496417988780228669': 'daily_grind',
 };
-
-// Thread category for Thread Master achievement
 const THREAD_ACHIEVEMENT_CATEGORY = '1471066298703282238';
-
-// ── ACHIEVEMENT DATA ────────────────────────────────────────────────────────────
 let achData = {}; // { [userId]: Set of achievement ids }
 let _achSaveTimer = null;
 
@@ -329,8 +309,6 @@ function getUserAch(userId) {
   if (!achData[userId]) achData[userId] = new Set();
   return achData[userId];
 }
-
-// Grant an achievement — returns true if newly unlocked
 async function grantAchievement(userId, achId, guild) {
   const set = getUserAch(userId);
   if (set.has(achId)) return false;
@@ -341,8 +319,6 @@ async function grantAchievement(userId, achId, guild) {
   if (!ach) return true;
 
   console.log(`[ACH] ${userId} unlocked: ${achId}`);
-
-  // DM the user
   try {
     const user = await client.users.fetch(userId).catch(() => null);
     if (user) {
@@ -358,22 +334,17 @@ async function grantAchievement(userId, achId, guild) {
 
   return true;
 }
-
-// Check channel-based first-message achievements
 async function checkChannelAchievement(userId, channelId, guild) {
   const achId = CHANNEL_ACHIEVEMENTS[channelId];
   if (!achId) return;
   await grantAchievement(userId, achId, guild);
 }
-
-// Check level-based achievements
 async function checkLevelAchievements(userId, level, guild) {
   const levelAch = { 5: 'level_5', 10: 'level_10', 20: 'level_20', 50: 'level_50', 100: 'level_100' };
   if (levelAch[level]) await grantAchievement(userId, levelAch[level], guild);
 }
 
 // ─── FONTS ─────────────────────────────────────────────────────────────────────
-// Priority: ./fonts/ (committed to repo) → system Liberation → system DejaVu
 (function registerFonts() {
   const FONT_DIR = path.join(__dirname, 'fonts');
   const interBold     = path.join(FONT_DIR, 'inter-bold.ttf');
@@ -387,8 +358,6 @@ async function checkLevelAchievements(userId, level, guild) {
     console.log('[Canvas] Inter fonts loaded from ./fonts/');
     return;
   }
-
-  // Render / Debian system fonts
   const LIBERATION = '/usr/share/fonts/truetype/liberation';
   const DEJAVU     = '/usr/share/fonts/truetype/dejavu';
 
@@ -413,7 +382,6 @@ async function checkLevelAchievements(userId, level, guild) {
 })();
 
 // ─── CARD HELPERS ──────────────────────────────────────────────────────────────
-// Fetch image bytes — hard 5 s timeout so a slow CDN never blocks the interaction
 function fetchBuf(url) {
   return new Promise((resolve) => {
     const lib = url.startsWith('https') ? https : http;
@@ -437,8 +405,6 @@ async function safeAvatar(url) {
     return buf && buf.length > 0 ? await loadImage(buf) : null;
   } catch { return null; }
 }
-
-// Clip-circle avatar draw (no ring — caller draws ring before calling this)
 function clipAvatar(ctx, img, cx, cy, r) {
   ctx.save();
   ctx.beginPath();
@@ -449,8 +415,6 @@ function clipAvatar(ctx, img, cx, cy, r) {
   else      { ctx.fillStyle = '#1e1e24'; ctx.fill(); }
   ctx.restore();
 }
-
-// Rounded rect path
 function rr(ctx, x, y, w, h, radius) {
   const r = Math.min(radius, w / 2, h / 2);
   ctx.beginPath();
@@ -461,23 +425,17 @@ function rr(ctx, x, y, w, h, radius) {
   ctx.arcTo(x,     y,     x + w, y,     r);
   ctx.closePath();
 }
-
-// Truncate text to fit maxW pixels
 function clip(ctx, text, maxW) {
   if (ctx.measureText(text).width <= maxW) return text;
   let t = text;
   while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
   return t + '…';
 }
-
-// Draw a pill-shaped progress bar
 function bar(ctx, x, y, w, h, pct, color) {
   const r  = h / 2;
   const fw = Math.max(r * 2, Math.min(pct, 1) * w);
-  // track
   ctx.fillStyle = 'rgba(255,255,255,0.07)';
   rr(ctx, x, y, w, h, r); ctx.fill();
-  // fill
   ctx.fillStyle = color;
   rr(ctx, x, y, fw, h, r); ctx.fill();
 }
@@ -491,8 +449,6 @@ async function drawRankCard({ username, avatarUrl, level, rank, currentXP, neede
   const W = 934, H = 282;
   const c   = createCanvas(W, H);
   const ctx = c.getContext('2d');
-
-  // ── Background (same dark as all other cards) ──
   ctx.fillStyle = '#13131a';
   ctx.fillRect(0, 0, W, H);
   const tint = ctx.createLinearGradient(0, 0, W, H);
@@ -500,22 +456,16 @@ async function drawRankCard({ username, avatarUrl, level, rank, currentXP, neede
   tint.addColorStop(1, 'rgba(88,101,242,0)');
   ctx.fillStyle = tint;
   ctx.fillRect(0, 0, W, H);
-
-  // ── Avatar ──
   const AVR = 94, AVX = 36 + AVR, AVY = H / 2;
   ctx.beginPath();
   ctx.arc(AVX, AVY, AVR + 3, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(255,255,255,0.08)';
   ctx.fill();
   clipAvatar(ctx, await safeAvatar(avatarUrl), AVX, AVY, AVR);
-
-  // ── Content block — vertically centred ──
   const BLOCK_H = 36 + 14 + 38 + 12 + 26 + 14 + 16; // ~156px
   const BLOCK_Y = Math.round(H / 2 - BLOCK_H / 2);
   const CX = AVX + AVR + 32;
   const CW = W - CX - 28;
-
-  // Row 1: RANK #N  LEVEL N
   let cy = BLOCK_Y + 32;
 
   ctx.font      = `bold 13px "UI SemiBold"`;
@@ -537,14 +487,10 @@ async function drawRankCard({ username, avatarUrl, level, rank, currentXP, neede
   ctx.font      = `bold 34px "UI Bold"`;
   ctx.fillStyle = '#ffffff';
   ctx.fillText(`${level}`, CX + rLW + rvW + lLW, cy + 2);
-
-  // Row 2: Username
   cy += 14 + 38;
   ctx.font      = `bold 34px "UI Bold"`;
   ctx.fillStyle = '#ffffff';
   ctx.fillText(clip(ctx, username, CW), CX, cy);
-
-  // Row 3: XP bar
   const BAR_Y = cy + 12, BAR_H = 26;
   ctx.fillStyle = 'rgba(0,0,0,0.38)';
   rr(ctx, CX, BAR_Y, CW, BAR_H, BAR_H / 2);
@@ -554,8 +500,6 @@ async function drawRankCard({ username, avatarUrl, level, rank, currentXP, neede
   ctx.fillStyle = '#5865f2';
   rr(ctx, CX, BAR_Y, fw, BAR_H, BAR_H / 2);
   ctx.fill();
-
-  // Row 4: server name + XP count
   const BOT_Y = BAR_Y + BAR_H + 16;
   ctx.font      = `bold 14px "UI SemiBold"`;
   ctx.fillStyle = 'rgba(255,255,255,0.45)';
@@ -582,12 +526,8 @@ async function drawLeaderboard(entries) {
 
   const c   = createCanvas(W, H);
   const ctx = c.getContext('2d');
-
-  // Background
   ctx.fillStyle = '#1e1f22';
   ctx.fillRect(0, 0, W, H);
-
-  // Title bar
   ctx.fillStyle = '#17181b';
   ctx.fillRect(0, 0, W, TITLE_H);
   ctx.beginPath();
@@ -604,47 +544,33 @@ async function drawLeaderboard(entries) {
     const e      = entries[i];
     const Y      = TITLE_H + i * ROW_H;
     const accent = i < 3 ? MEDAL[i] : '#5865f2';
-
-    // Row bg (alternating)
     ctx.fillStyle = i % 2 === 0 ? '#1e1f22' : '#222428';
     ctx.fillRect(0, Y, W, ROW_H);
-    // Subtle divider
     ctx.fillStyle = 'rgba(255,255,255,0.04)';
     ctx.fillRect(0, Y, W, 1);
-
-    // ── Rank number (centred in rank col) ──
     ctx.font      = i < 3 ? `bold 15px "UI Bold"` : `13px "UI"`;
     ctx.fillStyle = i < 3 ? MEDAL[i] : 'rgba(255,255,255,0.35)';
     const rankStr = `#${i + 1}`;
     const rankW   = ctx.measureText(rankStr).width;
     ctx.fillText(rankStr, RANK_COL / 2 - rankW / 2, Y + ROW_H / 2 + 5);
-
-    // ── Avatar (square, after rank col) ──
     ctx.fillStyle = '#2a2b30';
     ctx.fillRect(RANK_COL, Y, AVT, AVT);
     const avatarImg = await safeAvatar(e.avatarUrl);
     if (avatarImg) ctx.drawImage(avatarImg, RANK_COL, Y, AVT, AVT);
-    // Top-3 accent stripe on left edge of avatar
     if (i < 3) {
       ctx.fillStyle = MEDAL[i];
       ctx.fillRect(RANK_COL, Y, 3, AVT);
     }
-
-    // ── Username ──
     const TX          = RANK_COL + AVT + 14;
     const MAX_NAME_W  = W - TX - LVL_W - 16;
     ctx.font      = `bold 16px "UI Bold"`;
     ctx.fillStyle = '#ffffff';
     ctx.fillText(clip(ctx, `@${e.username}`, MAX_NAME_W), TX, Y + ROW_H / 2 + 6);
-
-    // ── LVL: XX (right-aligned) ──
     const lvlStr = `LVL: ${e.level}`;
     ctx.font      = `bold 15px "UI Bold"`;
     ctx.fillStyle = accent;
     const lvlMW   = ctx.measureText(lvlStr).width;
     ctx.fillText(lvlStr, W - lvlMW - 14, Y + ROW_H / 2 + 6);
-
-    // ── XP bar (bottom of row, content area only) ──
     const BAR_X = TX;
     const BAR_W = W - TX - 14;
     const BAR_Y = Y + ROW_H - BAR_PX;
@@ -705,12 +631,8 @@ function downloadBuffer(url) {
 // ─── READY ─────────────────────────────────────────────────────────────────────
 client.once('ready', async () => {
   console.log(`[Bot] Logged in as ${client.user.tag}`);
-
-  // Load persisted data first — everything else depends on this
   await loadXpData();
   await loadAchData();
-
-  // Register slash commands
   try {
     const rest  = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     const route = process.env.GUILD_ID
@@ -794,8 +716,6 @@ client.once('ready', async () => {
   } catch (err) {
     console.error('[Bot] Failed to register commands:', err);
   }
-
-  // Sticky messages
   for (const cfg of STICKY_MESSAGES) {
     try {
       const ch = await client.channels.fetch(cfg.channelId).catch(() => null);
@@ -811,8 +731,6 @@ client.once('ready', async () => {
       stickyCache.set(cfg.channelId, sent.id);
     } catch (err) { console.error(`[Sticky] ${cfg.channelId}:`, err); }
   }
-
-  // Seed rotating channel activity
   try {
     const rotCh = await client.channels.fetch(ROTATING_MESSAGE.channelId).catch(() => null);
     if (rotCh) {
@@ -824,8 +742,6 @@ client.once('ready', async () => {
 
   sendRotatingMessage();
   setInterval(sendRotatingMessage, ROTATING_MESSAGE.intervalMs);
-
-  // Start VC XP ticker
   startVcXpTicker();
 });
 
@@ -868,19 +784,11 @@ client.on('guildMemberAdd', async (member) => {
 // ─── MESSAGE CREATE ────────────────────────────────────────────────────────────
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
-
-  // XP
   await handleMessageXP(message);
-
-  // Rotating channel activity tracking
   if (message.channelId === ROTATING_MESSAGE.channelId)
     rotatingChannelLastActivity = Date.now();
-
-  // Auto-react
   if (AUTO_REACT_CHANNEL_IDS.includes(message.channelId))
     await message.react('❤️').catch(() => null);
-
-  // Sticky messages
   const stickyCfg = STICKY_MESSAGES.find(s => s.channelId === message.channelId);
   if (stickyCfg) {
     try {
@@ -895,8 +803,6 @@ client.on('messageCreate', async (message) => {
       stickyCache.set(message.channelId, sent.id);
     } catch (err) { console.error('[Sticky]', err); }
   }
-
-  // Keyword replies
   const lower = message.content.toLowerCase();
   for (const entry of KEYWORD_REPLIES) {
     const matched = entry.keywords.find(kw => lower.includes(kw.toLowerCase()));
@@ -912,7 +818,6 @@ client.on('messageCreate', async (message) => {
 
 // ─── THREAD AUTO-MESSAGES ──────────────────────────────────────────────────────
 client.on('threadCreate', async (thread) => {
-  // Thread Master achievement — any thread created inside the achievement category
   if (thread.parent?.parentId === THREAD_ACHIEVEMENT_CATEGORY || thread.parentId === THREAD_ACHIEVEMENT_CATEGORY) {
     const ownerId = thread.ownerId;
     if (ownerId) await grantAchievement(ownerId, 'thread_master', thread.guild);
@@ -935,24 +840,14 @@ async function handleMessageXP(message) {
   if (!message.guild) return;
   const userId = message.author.id;
   const now    = Date.now();
-
-  // 60s cooldown per user (same as Mee6/Arcane)
   if (now - (xpCooldowns.get(userId) || 0) < MSG_COOLDOWN_MS) return;
   xpCooldowns.set(userId, now);
-
-  // Natural XP: 15–40 base + small length bonus, capped
   let xp = calculateMessageXP(message.content);
-
-  // 2× in bonus channels
   if (DOUBLE_XP_CHANNEL_IDS.includes(message.channelId)) xp *= 2;
-
-  // 2× if currently in a VC
   if (message.member?.voice?.channelId) xp *= 2;
 
   console.log(`[XP] +${Math.floor(xp)} to ${userId}`);
   await grantXP(userId, Math.floor(xp), message.guild, message.channel);
-
-  // Achievement: first message in specific channels
   await checkChannelAchievement(userId, message.channelId, message.guild);
 }
 
@@ -973,7 +868,6 @@ async function grantXP(userId, amount, guild, notifyChannel) {
 }
 
 async function handleLevelUp(userId, newLevel, guild, notifyChannel) {
-  // 1. Assign milestone role if applicable
   const roleId = LEVEL_ROLES[newLevel];
   if (guild && roleId) {
     try {
@@ -988,8 +882,6 @@ async function handleLevelUp(userId, newLevel, guild, notifyChannel) {
       }
     } catch (err) { console.error('[XP] Role error:', err); }
   }
-
-  // 2. Only send a message at level 1 (first level up) and milestone levels
   const isMilestone = MILESTONE_LEVELS.includes(newLevel);
   const isFirstLevel = newLevel === 1;
   if (!isMilestone && !isFirstLevel) return;
@@ -1012,8 +904,6 @@ async function handleLevelUp(userId, newLevel, guild, notifyChannel) {
 }
 
 // ─── VOICE XP TICKER ──────────────────────────────────────────────────────────
-// 10 XP every 30 s = 20 XP/min in VC — equivalent to a message every ~1 min
-// Level-up notifications go to the guild's system channel
 const VC_XP_INTERVAL_MS = 30 * 1000;
 const VC_XP_AMOUNT      = 10;
 
@@ -1027,9 +917,7 @@ function startVcXpTicker() {
           if (vs.selfDeaf || vs.suppress)       continue;
           const ch = vs.channel;
           if (!ch) continue;
-          // Require at least 1 other non-bot member (anti-grind)
           if (ch.members.filter(m => !m.user.bot && m.id !== vs.id).size < 1) continue;
-          // Level-up messages go to system channel so they don't spam random channels
           await grantXP(vs.id, VC_XP_AMOUNT, guild, guild.systemChannel);
         }
       }
@@ -1055,7 +943,7 @@ async function createTicket(interaction, type) {
     c => c.parentId === TICKET_CATEGORY_ID && c.topic && c.topic.endsWith(`:${member.user.id}`)
   );
   if (existing)
-    return interaction.reply({ content: `<:cross:1479512858256478521> You already have an open ticket: <#${existing.id}>`, ephemeral: true });
+    return interaction.reply({ content: `<:ex:1497525479593476197> You already have an open ticket: <#${existing.id}>`, ephemeral: true });
 
   await interaction.deferReply({ ephemeral: true });
   try {
@@ -1077,21 +965,21 @@ async function createTicket(interaction, type) {
     );
     const msg = await ch.send({ content: `<@${member.user.id}>`, embeds: [embed], components: [row] });
     await msg.pin().catch(() => null);
-    await interaction.editReply({ content: `<:tick:1479512775440072755> Your ticket has been created: <#${ch.id}>` });
+    await interaction.editReply({ content: `<:tick:1497525507015708692> Your ticket has been created: <#${ch.id}>` });
   } catch (err) {
     console.error('[Ticket] Create error:', err);
-    await interaction.editReply({ content: '<:cross:1479512858256478521> Failed to create ticket.' });
+    await interaction.editReply({ content: '<:ex:1497525479593476197> Failed to create ticket.' });
   }
 }
 
 async function closeTicket(interaction) {
   const ch = interaction.channel;
   if (ch.parentId !== TICKET_CATEGORY_ID)
-    return interaction.reply({ content: '<:cross:1479512858256478521> Not a ticket channel.', ephemeral: true });
+    return interaction.reply({ content: '<:ex:1497525479593476197> Not a ticket channel.', ephemeral: true });
 
   const canClose = interaction.member.roles?.cache?.has(TICKET_CLOSE_ROLE_ID) || interaction.user.id === OWNER_ID;
   if (!canClose)
-    return interaction.reply({ content: "<:cross:1479512858256478521> You don't have permission to close tickets.", ephemeral: true });
+    return interaction.reply({ content: "<:ex:1497525479593476197> You don't have permission to close tickets.", ephemeral: true });
 
   await interaction.reply({ content: '<:loading:1479510452215218197> Closing in 5 seconds…' });
   setTimeout(() => ch.delete().catch(err => console.error('[Ticket] Close error:', err)), 5000);
@@ -1107,16 +995,16 @@ client.on('interactionCreate', async (interaction) => {
       try {
         const inboxCh = await client.channels.fetch(QUESTIONS_INBOX_CHANNEL_ID).catch(() => null);
         if (!inboxCh)
-          return interaction.reply({ content: '<:cross:1479512858256478521> Questions channel not found.', ephemeral: true });
+          return interaction.reply({ content: '<:ex:1497525479593476197> Questions channel not found.', ephemeral: true });
         const embed = new EmbedBuilder().setColor(EMBED_COLOR).setTitle('Anonymous Question').setDescription(text).setTimestamp();
         const delRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('question_delete').setLabel('✕').setStyle(ButtonStyle.Danger)
         );
         await inboxCh.send({ embeds: [embed], components: [delRow] });
-        await interaction.reply({ content: '<:tick:1479512775440072755> Your question has been submitted anonymously!', ephemeral: true });
+        await interaction.reply({ content: '<:tick:1497525507015708692> Your question has been submitted anonymously!', ephemeral: true });
       } catch (err) {
         console.error('[Question] Submit error:', err);
-        await interaction.reply({ content: '<:cross:1479512858256478521> Failed to submit.', ephemeral: true });
+        await interaction.reply({ content: '<:ex:1497525479593476197> Failed to submit.', ephemeral: true });
       }
     }
     return;
@@ -1139,7 +1027,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (customId === 'question_delete') {
       const canDel = CLIENT_ROLE_IDS.some(id => interaction.member.roles?.cache?.has(id)) || interaction.user.id === OWNER_ID;
-      if (!canDel) return interaction.reply({ content: "<:cross:1479512858256478521> No permission.", ephemeral: true });
+      if (!canDel) return interaction.reply({ content: "<:ex:1497525479593476197> You don't have permission to use this command!", ephemeral: true });
       await interaction.message.delete().catch(() => null);
       return;
     }
@@ -1152,7 +1040,7 @@ client.on('interactionCreate', async (interaction) => {
     // ── /eval ──
     if (interaction.commandName === 'eval') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: "<:ex:1497525479593476197> You don't have permission to use this command!", ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
       try {
         let result = eval(interaction.options.getString('code'));
@@ -1189,7 +1077,7 @@ client.on('interactionCreate', async (interaction) => {
     // ── /embed ──
     } else if (interaction.commandName === 'embed') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: "<:ex:1497525479593476197> You don't have permission to use this command!", ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
       const ch         = interaction.options.getChannel('channel');
       const content    = interaction.options.getString('content') ?? undefined;
@@ -1220,7 +1108,7 @@ client.on('interactionCreate', async (interaction) => {
         embeds.push(e);
       }
       if (!content && !embeds.length && !imageUrl)
-        return interaction.editReply({ content: '<:cross:1479512858256478521> Nothing to send!' });
+        return interaction.editReply({ content: '<:ex:1497525479593476197> Nothing to send!' });
       const components = buttonsRaw ? buildButtonRows(buttonsRaw) : [];
       const files = [];
       if (imageUrl) {
@@ -1229,42 +1117,42 @@ client.on('interactionCreate', async (interaction) => {
           const ext = imageUrl.split('?')[0].split('.').pop().split('/').pop().toLowerCase() || 'png';
           files.push(new AttachmentBuilder(buf, { name: `image.${ext}` }));
         } catch (e) {
-          return interaction.editReply({ content: `<:cross:1479512858256478521> Failed to download image: \`${e.message}\`` });
+          return interaction.editReply({ content: `<:ex:1497525479593476197> Failed to download image: \`${e.message}\`` });
         }
       }
       try {
         await ch.send({ content, embeds, components, files });
-        await interaction.editReply({ content: `<:tick:1479512775440072755> Sent to <#${ch.id}>!` });
+        await interaction.editReply({ content: `<:tick:1497525507015708692> Sent to <#${ch.id}>!` });
       } catch (e) {
-        await interaction.editReply({ content: `<:cross:1479512858256478521> Failed: \`${e.message}\`` });
+        await interaction.editReply({ content: `<:ex:1497525479593476197> Failed: \`${e.message}\`` });
       }
 
     // ── /verify ──
     } else if (interaction.commandName === 'verify') {
       if (!interaction.member.roles?.cache?.has('1462396655558201365'))
-        return interaction.reply({ content: "<:cross:1479512858256478521> No permission.", ephemeral: true });
+        return interaction.reply({ content: "<:ex:1497525479593476197> You don't have permission to use this command!", ephemeral: true });
       const targetUser   = interaction.options.getUser('member');
       const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
       if (!targetMember)
-        return interaction.reply({ content: '<:cross:1479512858256478521> Member not found.', ephemeral: true });
+        return interaction.reply({ content: '<:ex:1497525479593476197> Member not found.', ephemeral: true });
       try {
         await targetMember.roles.add('1442822567525224448');
-        await interaction.reply({ content: `<:tick:1479512775440072755> <@${targetUser.id}> has been verified!` });
+        await interaction.reply({ content: `<:tick:1497525507015708692> <@${targetUser.id}> has been verified!` });
       } catch (err) {
-        await interaction.reply({ content: '<:cross:1479512858256478521> Failed to assign role.', ephemeral: true });
+        await interaction.reply({ content: '<:ex:1497525479593476197> Failed to assign role.', ephemeral: true });
       }
 
     // ── /link ──
     } else if (interaction.commandName === 'link') {
       const entry = LINK_OPTIONS.find(l => l.value === interaction.options.getString('product'));
-      if (!entry) return interaction.reply({ content: '<:cross:1479512858256478521> Unknown product.', ephemeral: true });
+      if (!entry) return interaction.reply({ content: '<:ex:1497525479593476197> Unknown product.', ephemeral: true });
       const btn = new ButtonBuilder().setLabel(`🔗 ${entry.name}`).setURL(entry.url).setStyle(ButtonStyle.Link);
       await interaction.reply({ content: entry.url, components: [new ActionRowBuilder().addComponents(btn)] });
 
     // ── /tickets ──
     } else if (interaction.commandName === 'tickets') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: "<:ex:1497525479593476197> You don't have permission to use this command!", ephemeral: true });
       const embed = new EmbedBuilder().setColor(EMBED_COLOR).setTitle('Create a Support Ticket')
         .setDescription('To get support, click the corresponding button below.\n\nThis will create a private ticket where our team can assist you directly.\n\nPlease only open a ticket for a valid reason so we can respond quickly and efficiently.');
       const row = new ActionRowBuilder().addComponents(
@@ -1273,48 +1161,48 @@ client.on('interactionCreate', async (interaction) => {
         new ButtonBuilder().setCustomId('ticket_questions').setLabel('❓ Questions').setStyle(ButtonStyle.Secondary),
       );
       await interaction.channel.send({ embeds: [embed], components: [row] });
-      await interaction.reply({ content: '<:tick:1479512775440072755> Ticket panel sent.', ephemeral: true });
+      await interaction.reply({ content: '<:tick:1497525507015708692> Ticket panel sent.', ephemeral: true });
 
     // ── /question ──
     } else if (interaction.commandName === 'question') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: "<:ex:1497525479593476197> You don't have permission to use this command!", ephemeral: true });
       const embed = new EmbedBuilder().setColor(EMBED_COLOR)
         .setDescription("Have a question but prefer to stay behind the scenes?\n\nYou can submit it anonymously by clicking *\"Submit a Question\"* below.\n\nAll submissions are anonymous, and we'll address them during our weekly calls.");
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('submit_question').setLabel('Submit a Question').setStyle(ButtonStyle.Secondary)
       );
       await interaction.channel.send({ embeds: [embed], components: [row] });
-      await interaction.reply({ content: '<:tick:1479512775440072755> Question panel sent.', ephemeral: true });
+      await interaction.reply({ content: '<:tick:1497525507015708692> Question panel sent.', ephemeral: true });
 
     // ── /add ──
     } else if (interaction.commandName === 'add') {
       const hasRole = CLIENT_ROLE_IDS.some(id => interaction.member.roles?.cache?.has(id)) || interaction.user.id === OWNER_ID;
-      if (!hasRole) return interaction.reply({ content: "<:cross:1479512858256478521> No permission.", ephemeral: true });
+      if (!hasRole) return interaction.reply({ content: "<:ex:1497525479593476197> You don't have permission to use this command!", ephemeral: true });
       if (interaction.channel.parentId !== TICKET_CATEGORY_ID)
-        return interaction.reply({ content: '<:cross:1479512858256478521> Not a ticket channel.', ephemeral: true });
+        return interaction.reply({ content: '<:ex:1497525479593476197> Not a ticket channel.', ephemeral: true });
       const targetUser = interaction.options.getUser('user');
       try {
         await interaction.channel.permissionOverwrites.edit(targetUser.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
-        await interaction.reply({ content: `<:tick:1479512775440072755> <@${targetUser.id}> added.` });
+        await interaction.reply({ content: `<:tick:1497525507015708692> <@${targetUser.id}> added.` });
       } catch (err) {
-        await interaction.reply({ content: '<:cross:1479512858256478521> Failed.', ephemeral: true });
+        await interaction.reply({ content: '<:ex:1497525479593476197> Failed.', ephemeral: true });
       }
 
     // ── /remove ──
     } else if (interaction.commandName === 'remove') {
       const hasRole = CLIENT_ROLE_IDS.some(id => interaction.member.roles?.cache?.has(id)) || interaction.user.id === OWNER_ID;
-      if (!hasRole) return interaction.reply({ content: "<:cross:1479512858256478521> No permission.", ephemeral: true });
+      if (!hasRole) return interaction.reply({ content: "<:ex:1497525479593476197> You don't have permission to use this command!", ephemeral: true });
       if (interaction.channel.parentId !== TICKET_CATEGORY_ID)
-        return interaction.reply({ content: '<:cross:1479512858256478521> Not a ticket channel.', ephemeral: true });
+        return interaction.reply({ content: '<:ex:1497525479593476197> Not a ticket channel.', ephemeral: true });
       const targetUser = interaction.options.getUser('user');
       if (interaction.channel.topic?.endsWith(`:${targetUser.id}`))
-        return interaction.reply({ content: '<:cross:1479512858256478521> Cannot remove the ticket owner.', ephemeral: true });
+        return interaction.reply({ content: '<:ex:1497525479593476197> Cannot remove the ticket owner.', ephemeral: true });
       try {
         await interaction.channel.permissionOverwrites.edit(targetUser.id, { ViewChannel: false, SendMessages: false, ReadMessageHistory: false });
-        await interaction.reply({ content: `<:tick:1479512775440072755> <@${targetUser.id}> removed.` });
+        await interaction.reply({ content: `<:tick:1497525507015708692> <@${targetUser.id}> removed.` });
       } catch (err) {
-        await interaction.reply({ content: '<:cross:1479512858256478521> Failed.', ephemeral: true });
+        await interaction.reply({ content: '<:ex:1497525479593476197> Failed.', ephemeral: true });
       }
 
     // ── /achievements ──
@@ -1343,7 +1231,6 @@ client.on('interactionCreate', async (interaction) => {
 
     // ── /level ──
     } else if (interaction.commandName === 'level') {
-      // Defer FIRST — before any async work — Discord requires acknowledgement within 3s
       await interaction.deferReply({ ephemeral: true });
 
       const target  = interaction.options.getUser('member') || interaction.user;
@@ -1357,7 +1244,6 @@ client.on('interactionCreate', async (interaction) => {
 
       const member    = await interaction.guild.members.fetch(target.id).catch(() => null);
       const username  = member?.displayName || target.username;
-      // Use smaller avatar size and add ?size param to speed up fetch
       const avatarUrl = target.displayAvatarURL({ extension: 'png', size: 128 });
 
       try {
@@ -1369,7 +1255,6 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply({ files: [new AttachmentBuilder(buf, { name: 'rank.png' })] });
       } catch (err) {
         console.error('[/level] card error:', err.message);
-        // Always fall back to text so the interaction isn't left hanging
         await interaction.editReply({
           content: `**${username}** — Level **${level}** · Rank **#${rank}** · **${totalXP.toLocaleString()} XP**`,
         }).catch(() => null);
@@ -1377,7 +1262,6 @@ client.on('interactionCreate', async (interaction) => {
 
     // ── /leaderboard ──
     } else if (interaction.commandName === 'leaderboard') {
-      // Defer FIRST
       await interaction.deferReply({ ephemeral: true });
 
       const sorted = Object.entries(xpData)
@@ -1387,8 +1271,6 @@ client.on('interactionCreate', async (interaction) => {
       if (!sorted.length) {
         return interaction.editReply({ content: 'No XP data yet!' });
       }
-
-      // Fetch members sequentially to avoid hammering Discord's API
       const entries = [];
       for (const [userId, d] of sorted) {
         const member = await interaction.guild.members.fetch(userId).catch(() => null);
@@ -1413,20 +1295,20 @@ client.on('interactionCreate', async (interaction) => {
     // ── /givexp ──
     } else if (interaction.commandName === 'givexp') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: "<:ex:1497525479593476197> You don't have permission to use this command!", ephemeral: true });
       const target = interaction.options.getUser('member');
       const amount = interaction.options.getInteger('amount');
       await grantXP(target.id, amount, interaction.guild, interaction.channel);
       const { level } = parseLevelData(getUserData(target.id).xp || 0);
       await interaction.reply({
-        content: `<:tick:1479512775440072755> Gave **${amount} XP** to <@${target.id}>. Now level **${level}** (${(getUserData(target.id).xp||0).toLocaleString()} XP).`,
+        content: `<:tick:1497525507015708692> Gave **${amount} XP** to <@${target.id}>. Now level **${level}** (${(getUserData(target.id).xp||0).toLocaleString()} XP).`,
         ephemeral: true,
       });
 
     // ── /setlevel ──
     } else if (interaction.commandName === 'setlevel') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: "<:ex:1497525479593476197> You don't have permission to use this command!", ephemeral: true });
       const target   = interaction.options.getUser('member');
       const newLevel = interaction.options.getInteger('level');
       const data     = getUserData(target.id);
@@ -1434,8 +1316,6 @@ client.on('interactionCreate', async (interaction) => {
       data.xp    = totalXPForLevel(newLevel);
       data.level = newLevel;
       saveXpData();
-
-      // Assign correct milestone role
       const member = await interaction.guild.members.fetch(target.id).catch(() => null);
       if (member) {
         const milestone = [...MILESTONE_LEVELS].reverse().find(m => m <= newLevel);
@@ -1447,15 +1327,14 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       await interaction.reply({
-        content: `<:tick:1479512775440072755> Set <@${target.id}>'s level to **${newLevel}** (was ${oldLevel}). XP: **${data.xp.toLocaleString()}**.`,
+        content: `<:tick:1497525507015708692> Set <@${target.id}>'s level to **${newLevel}** (was ${oldLevel}). XP: **${data.xp.toLocaleString()}**.`,
         ephemeral: true,
       });
     }
 
   } catch (err) {
     console.error(`[Command] /${interaction.commandName}:`, err);
-    // Interaction may already be expired — try every possible reply method
-    const m = { content: '<:cross:1479512858256478521> An error occurred.', ephemeral: true };
+    const m = { content: '<:ex:1497525479593476197> An error occurred.', ephemeral: true };
     try {
       if (interaction.deferred || interaction.replied) await interaction.editReply(m);
       else await interaction.reply(m);
