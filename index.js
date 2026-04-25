@@ -1,3 +1,20 @@
+// ─── DEBUG: log every require so we can pinpoint a crash ──────────────────────
+console.log('[DEBUG] Process starting...');
+console.log('[DEBUG] Node version:', process.version);
+console.log('[DEBUG] Platform:', process.platform, process.arch);
+
+try { require('dotenv').config(); console.log('[DEBUG] dotenv OK'); }
+catch(e) { console.error('[DEBUG] dotenv FAILED:', e.message); process.exit(1); }
+
+try { require('discord.js'); console.log('[DEBUG] discord.js OK'); }
+catch(e) { console.error('[DEBUG] discord.js FAILED:', e.message); process.exit(1); }
+
+try { require('@napi-rs/canvas'); console.log('[DEBUG] @napi-rs/canvas OK'); }
+catch(e) { console.error('[DEBUG] @napi-rs/canvas FAILED:', e.message); process.exit(1); }
+
+console.log('[DEBUG] All requires passed, loading app...');
+// ──────────────────────────────────────────────────────────────────────────────
+
 require('dotenv').config();
 const {
   Client,
@@ -27,7 +44,7 @@ const { createCanvas, GlobalFonts, loadImage } = require('@napi-rs/canvas');
 
 // ─── EXPRESS SERVER ────────────────────────────────────────────────────────────
 const app = express();
-app.get('/', (_req, res) => res.send('Ascend Bot is alive!'));
+app.get('/', (_req, res) => res.send('Ascend Bot is alive! 🤖'));
 app.listen(process.env.PORT || 3000, () =>
   console.log(`[Server] Running on port ${process.env.PORT || 3000}`)
 );
@@ -40,7 +57,7 @@ const GHOST_PING_CHANNEL_ID = '1462389865382547621';
 const CLIENT_ROLE_IDS    = ['1462396655558201365', '1448123817338867832'];
 const TICKET_CLOSE_ROLE_ID  = '1462396655558201365';
 const TICKET_CATEGORY_ID    = '1478617294648115423';
-const TICKET_STAFF_ROLE_ID  = ['1462396655558201365', '1469906273309950215'];
+const TICKET_STAFF_ROLE_ID  = '1462396655558201365';
 const QUESTIONS_INBOX_CHANNEL_ID = '1463809063157629044';
 
 const AUTO_REACT_CHANNEL_IDS = [
@@ -88,7 +105,7 @@ const STICKY_MESSAGES = [
 const ROTATING_MESSAGE = {
   channelId:  '1471066886031540349',
   intervalMs: 60 * 60 * 1000,
-  title:      'Amazon',
+  title:      'Gabes Amazon Storefront',
   description: 'Check out Gabes Amazon storefront featuring products he personally uses day to day. From walking pads and content creation kits to cooking essentials, recovery tools, and sleep maxxing gear — everything is hand-picked to support performance, productivity, and health.',
   buttonLabel: '🛒 View Store',
   buttonUrl:   'https://www.amazon.com.au/shop/anabolic_gabe?ref_=cm_sw_r_cp_ud_aipsfshop_TANG1M7CGF6JP95F6ERR',
@@ -108,7 +125,7 @@ const THREAD_AUTO_MESSAGES = [
     parentChannelId: '1465489677762039838',
     title: 'Versa Gripps',
     description: "Engineered for serious lifters, Versa Gripps provide fast, secure wrist support and a locked-in hold on the bar - no awkward wrapping, no wasted time between sets. Whether you're pulling heavy deadlifts, grinding through rows, or pushing your back days harder than ever, they let you focus on the target muscle instead of fighting your grip.\n\nTrain stronger. Lift longer. Remove the weak link.",
-    buttons: [{ label: '🛒 Shop Here', url: 'https://www.versagripps.com/?sca_ref=8008738.NxqfWnUjps&utm_source=affiliate&utm_medium=versa-gripps-affiliate-program&utm_campaign=8008738' }],
+    buttons: [{ label: '🛒 Shop Versa Gripps', url: 'https://www.versagripps.com/?sca_ref=8008738.NxqfWnUjps&utm_source=affiliate&utm_medium=versa-gripps-affiliate-program&utm_campaign=8008738' }],
   },
 ];
 
@@ -164,13 +181,27 @@ function calculateMessageXP(content) {
   return base + lengthBonus;
 }
 
+// ─── DATA PERSISTENCE — JSONBin.io (free, no disk needed) ─────────────────────
+//
+//  Sign up free at https://jsonbin.io → grab your Master Key
+//  Create TWO bins (one for XP, one for achievements) → grab both Bin IDs
+//  Set these 3 env vars in Render:
+//    JSONBIN_KEY   = your Master Key  (e.g. $2a$10$abc...)
+//    XP_BIN_ID     = bin ID for XP data  (e.g. 64af1234abc...)
+//    ACH_BIN_ID    = bin ID for achievements (e.g. 64af5678def...)
+//
 const JSONBIN_KEY  = process.env.JSONBIN_KEY  || '';
 const XP_BIN_ID   = process.env.XP_BIN_ID    || '';
 const ACH_BIN_ID  = process.env.ACH_BIN_ID   || '';
 const JSONBIN_BASE = 'api.jsonbin.io';
 
 if (!JSONBIN_KEY || !XP_BIN_ID || !ACH_BIN_ID) {
-  console.warn('WARNING: JSONBin env vars not set!');
+  console.warn('┌─────────────────────────────────────────────────────────┐');
+  console.warn('│  WARNING: JSONBin env vars not set!                     │');
+  console.warn('│  Set JSONBIN_KEY, XP_BIN_ID, ACH_BIN_ID in Render.     │');
+  console.warn('│  Data will NOT persist across restarts until you do.    │');
+  console.warn('└─────────────────────────────────────────────────────────┘');
+}
 
 // Low-level JSONBin GET/PUT
 function jsonbinGet(binId) {
@@ -705,14 +736,14 @@ client.once('ready', async () => {
 
     const cmds = [
       new SlashCommandBuilder()
-        .setName('eval').setDescription('Run Code')
+        .setName('eval').setDescription('Evaluate JavaScript (owner only)')
         .addStringOption(o => o.setName('code').setDescription('Code to run').setRequired(true)),
 
       new SlashCommandBuilder()
         .setName('info').setDescription('Display server and bot info'),
 
       new SlashCommandBuilder()
-        .setName('message').setDescription('Send a message or embed - staff only')
+        .setName('embed').setDescription('Send a message or embed (owner only)')
         .addChannelOption(o => o.setName('channel').setDescription('Target channel').setRequired(true))
         .addStringOption(o => o.setName('content').setDescription('Plain text content'))
         .addStringOption(o => o.setName('image_url').setDescription('Image URL to attach'))
@@ -730,7 +761,7 @@ client.once('ready', async () => {
         .addBooleanOption(o => o.setName('timestamp').setDescription('Add timestamp')),
 
       new SlashCommandBuilder()
-        .setName('verify').setDescription('Verify a member - staff only')
+        .setName('verify').setDescription('Verify a member (staff only)')
         .addUserOption(o => o.setName('member').setDescription('Member to verify').setRequired(true)),
 
       new SlashCommandBuilder()
@@ -739,17 +770,17 @@ client.once('ready', async () => {
           .addChoices(...LINK_OPTIONS.map(l => ({ name: l.name, value: l.value })))),
 
       new SlashCommandBuilder()
-        .setName('tickets').setDescription('Send the ticket panel - staff only'),
+        .setName('tickets').setDescription('Send the ticket panel (owner only)'),
 
       new SlashCommandBuilder()
         .setName('question').setDescription('Send the anonymous question panel (owner only)'),
 
       new SlashCommandBuilder()
-        .setName('add').setDescription('Add a user to this ticket - staff only')
+        .setName('add').setDescription('Add a user to this ticket (staff only)')
         .addUserOption(o => o.setName('user').setDescription('User to add').setRequired(true)),
 
       new SlashCommandBuilder()
-        .setName('remove').setDescription('Remove a user from this ticket - staff only')
+        .setName('remove').setDescription('Remove a user from this ticket (staff only)')
         .addUserOption(o => o.setName('user').setDescription('User to remove').setRequired(true)),
 
       new SlashCommandBuilder()
@@ -764,12 +795,12 @@ client.once('ready', async () => {
         .setName('leaderboard').setDescription('View the XP leaderboard'),
 
       new SlashCommandBuilder()
-        .setName('givexp').setDescription('Give XP to a member - staff only')
+        .setName('givexp').setDescription('Give XP to a member (owner only)')
         .addUserOption(o => o.setName('member').setDescription('Member').setRequired(true))
         .addIntegerOption(o => o.setName('amount').setDescription('Amount of XP').setRequired(true).setMinValue(1)),
 
       new SlashCommandBuilder()
-        .setName('setlevel').setDescription("Set a member's level - staff only")
+        .setName('setlevel').setDescription("Set a member's level (owner only)")
         .addUserOption(o => o.setName('member').setDescription('Member').setRequired(true))
         .addIntegerOption(o => o.setName('level').setDescription('New level').setRequired(true).setMinValue(0)),
 
@@ -987,7 +1018,7 @@ async function handleLevelUp(userId, newLevel, guild, notifyChannel) {
 
   let msg;
   if (isFirstLevel && !isMilestone) {
-    msg = `<@${userId}> has reached level **1**. First of many milestones 🎉`;
+    msg = `<@${userId}> has reached level **1**. Welcome to the ranks! 🎉`;
   } else if (isMilestone) {
     msg = nextMilestone
       ? `<@${userId}> has reached level **${newLevel}**! 🏆 Milestone unlocked — next milestone: level **${nextMilestone}**`
@@ -1073,13 +1104,13 @@ async function createTicket(interaction, type) {
 async function closeTicket(interaction) {
   const ch = interaction.channel;
   if (ch.parentId !== TICKET_CATEGORY_ID)
-    return interaction.reply({ content: '<:cross:1479512858256478521> This is not a ticket channel.', ephemeral: true });
+    return interaction.reply({ content: '<:cross:1479512858256478521> Not a ticket channel.', ephemeral: true });
 
   const canClose = interaction.member.roles?.cache?.has(TICKET_CLOSE_ROLE_ID) || interaction.user.id === OWNER_ID;
   if (!canClose)
     return interaction.reply({ content: "<:cross:1479512858256478521> You don't have permission to close tickets.", ephemeral: true });
 
-  await interaction.reply({ content: '<a:loading:1479510452215218197> Now closing this ticket...' });
+  await interaction.reply({ content: '<:loading:1479510452215218197> Closing in 5 seconds…' });
   setTimeout(() => ch.delete().catch(err => console.error('[Ticket] Close error:', err)), 5000);
 }
 
@@ -1458,6 +1489,7 @@ process.on('uncaughtException',  err => console.error('[Uncaught]',  err));
 console.log('━━━ Ascend Bot startup ━━━');
 console.log('  NODE_ENV:      ', process.env.NODE_ENV || '(not set)');
 console.log('  TOKEN set:     ', !!process.env.DISCORD_TOKEN);
+console.log('  TOKEN prefix:  ', process.env.DISCORD_TOKEN ? process.env.DISCORD_TOKEN.slice(0, 10) + '...' : 'N/A');
 console.log('  CLIENT_ID:     ', process.env.CLIENT_ID || '(not set)');
 console.log('  GUILD_ID:      ', process.env.GUILD_ID  || '(not set — global cmds)');
 console.log('  JSONBIN_KEY:   ', JSONBIN_KEY  ? '✓ set' : '✗ MISSING');
@@ -1470,7 +1502,21 @@ if (!process.env.DISCORD_TOKEN) {
   process.exit(1);
 }
 
+// Rate limit logging
+client.rest.on('rateLimited', info => {
+  console.warn('[RATE LIMITED]', JSON.stringify(info));
+});
+
+client.on('error', err => console.error('[Client error]', err));
+client.on('warn',  msg => console.warn('[Client warn]',  msg));
+client.on('shardError', err => console.error('[Shard error]', err));
+
+console.log('[Bot] Calling client.login()...');
 client.login(process.env.DISCORD_TOKEN)
-  .then(() => console.log('[Bot] Login successful'))
-  .catch(err => { console.error('[Bot] Login FAILED:', err.message); process.exit(1); });
-}
+  .then(() => console.log('[Bot] client.login() resolved OK'))
+  .catch(err => {
+    console.error('[Bot] Login FAILED:', err.message);
+    console.error('[Bot] Error code:', err.code);
+    console.error('[Bot] Full error:', err);
+    process.exit(1);
+  });
