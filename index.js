@@ -239,7 +239,7 @@ function jsonbinPut(binId, data) {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
         'X-Master-Key': JSONBIN_KEY,
-        'X-Bin-Versioning': 'false', // don't keep old versions, saves quota
+        'X-Bin-Versioning': 'true', // don't keep old versions, saves quota
       },
     };
     const req = https.request(options, (res) => {
@@ -257,21 +257,30 @@ function jsonbinPut(binId, data) {
 // ── XP DATA ────────────────────────────────────────────────────────────────────
 let xpData = {};
 let _xpSaveTimer = null;
+let _xpLoaded = false;
 
 async function loadXpData() {
-  if (!XP_BIN_ID) { console.log('[XP] No XP_BIN_ID — starting fresh (not persisted)'); return; }
+  if (!XP_BIN_ID) { console.log('[XP] No XP_BIN_ID — starting fresh (not persisted)'); _xpLoaded = true; return; }
   console.log('[XP] Loading from JSONBin...');
   const record = await jsonbinGet(XP_BIN_ID);
-  if (record && typeof record === 'object') {
+  if (record && typeof record === 'object' && Object.keys(record).length > 0) {
     xpData = record;
+    _xpLoaded = true;
     console.log(`[XP] Loaded ${Object.keys(xpData).length} users`);
+  } else if (record && typeof record === 'object') {
+    // Bin exists but is empty — safe to treat as fresh
+    _xpLoaded = true;
+    console.log('[XP] Bin is empty — starting fresh');
   } else {
-    console.log('[XP] No existing data — starting fresh');
+    // Null response = network/timeout issue — do NOT mark as loaded, block saves
+    console.error('[XP] Failed to load from JSONBin — saves blocked until next restart to protect data');
   }
 }
 
 function saveXpData() {
   if (!XP_BIN_ID) return;
+  if (!_xpLoaded) { console.warn('[XP] Save blocked — data not loaded yet'); return; }
+  if (Object.keys(xpData).length === 0) { console.warn('[XP] Save blocked — xpData is empty, refusing to overwrite'); return; }
   // Debounce — wait 10 s after last change before writing, to batch rapid XP gains
   if (_xpSaveTimer) clearTimeout(_xpSaveTimer);
   _xpSaveTimer = setTimeout(async () => {
@@ -822,7 +831,6 @@ client.once('ready', async () => {
         fetched = await ch.messages.fetch({ limit: 100 });
         for (const [, m] of fetched.filter(m => m.author.id === client.user.id))
           await m.delete().catch(() => null);
-        if (fetched.size === 100) await new Promise(r => setTimeout(r, 1500));
       } while (fetched.size === 100);
       const embed = new EmbedBuilder().setColor(EMBED_COLOR).setTitle(cfg.title).setDescription(cfg.description);
       const sent = await ch.send({ embeds: [embed] });
