@@ -181,6 +181,15 @@ function calculateMessageXP(content) {
   return base + lengthBonus;
 }
 
+// ─── DATA PERSISTENCE — JSONBin.io (free, no disk needed) ─────────────────────
+//
+//  Sign up free at https://jsonbin.io → grab your Master Key
+//  Create TWO bins (one for XP, one for achievements) → grab both Bin IDs
+//  Set these 3 env vars in Render:
+//    JSONBIN_KEY   = your Master Key  (e.g. $2a$10$abc...)
+//    XP_BIN_ID     = bin ID for XP data  (e.g. 64af1234abc...)
+//    ACH_BIN_ID    = bin ID for achievements (e.g. 64af5678def...)
+//
 const JSONBIN_KEY  = process.env.JSONBIN_KEY  || '';
 const XP_BIN_ID   = process.env.XP_BIN_ID    || '';
 const ACH_BIN_ID  = process.env.ACH_BIN_ID   || '';
@@ -813,6 +822,7 @@ client.once('ready', async () => {
         fetched = await ch.messages.fetch({ limit: 100 });
         for (const [, m] of fetched.filter(m => m.author.id === client.user.id))
           await m.delete().catch(() => null);
+        if (fetched.size === 100) await new Promise(r => setTimeout(r, 1500));
       } while (fetched.size === 100);
       const embed = new EmbedBuilder().setColor(EMBED_COLOR).setTitle(cfg.title).setDescription(cfg.description);
       const sent = await ch.send({ embeds: [embed] });
@@ -1063,7 +1073,7 @@ async function createTicket(interaction, type) {
     c => c.parentId === TICKET_CATEGORY_ID && c.topic && c.topic.endsWith(`:${member.user.id}`)
   );
   if (existing)
-    return interaction.reply({ content: ` <:ex:1497525479593476197> You already have an open ticket: <#${existing.id}>`, ephemeral: true });
+    return interaction.reply({ content: `<:cross:1479512858256478521> You already have an open ticket: <#${existing.id}>`, ephemeral: true });
 
   await interaction.deferReply({ ephemeral: true });
   try {
@@ -1088,18 +1098,18 @@ async function createTicket(interaction, type) {
     await interaction.editReply({ content: `<:tick:1479512775440072755> Your ticket has been created: <#${ch.id}>` });
   } catch (err) {
     console.error('[Ticket] Create error:', err);
-    await interaction.editReply({ content: ' <:ex:1497525479593476197> Failed to create ticket.' });
+    await interaction.editReply({ content: '<:cross:1479512858256478521> Failed to create ticket.' });
   }
 }
 
 async function closeTicket(interaction) {
   const ch = interaction.channel;
   if (ch.parentId !== TICKET_CATEGORY_ID)
-    return interaction.reply({ content: ' <:ex:1497525479593476197> Not a ticket channel.', ephemeral: true });
+    return interaction.reply({ content: '<:cross:1479512858256478521> Not a ticket channel.', ephemeral: true });
 
   const canClose = interaction.member.roles?.cache?.has(TICKET_CLOSE_ROLE_ID) || interaction.user.id === OWNER_ID;
   if (!canClose)
-    return interaction.reply({ content: " <:ex:1497525479593476197> You don't have permission to close tickets.", ephemeral: true });
+    return interaction.reply({ content: "<:cross:1479512858256478521> You don't have permission to close tickets.", ephemeral: true });
 
   await interaction.reply({ content: '<:loading:1479510452215218197> Closing in 5 seconds…' });
   setTimeout(() => ch.delete().catch(err => console.error('[Ticket] Close error:', err)), 5000);
@@ -1115,7 +1125,7 @@ client.on('interactionCreate', async (interaction) => {
       try {
         const inboxCh = await client.channels.fetch(QUESTIONS_INBOX_CHANNEL_ID).catch(() => null);
         if (!inboxCh)
-          return interaction.reply({ content: ' <:ex:1497525479593476197> Questions channel not found.', ephemeral: true });
+          return interaction.reply({ content: '<:cross:1479512858256478521> Questions channel not found.', ephemeral: true });
         const embed = new EmbedBuilder().setColor(EMBED_COLOR).setTitle('Anonymous Question').setDescription(text).setTimestamp();
         const delRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('question_delete').setLabel('✕').setStyle(ButtonStyle.Danger)
@@ -1124,7 +1134,7 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.reply({ content: '<:tick:1479512775440072755> Your question has been submitted anonymously!', ephemeral: true });
       } catch (err) {
         console.error('[Question] Submit error:', err);
-        await interaction.reply({ content: ' <:ex:1497525479593476197> Failed to submit.', ephemeral: true });
+        await interaction.reply({ content: '<:cross:1479512858256478521> Failed to submit.', ephemeral: true });
       }
     }
     return;
@@ -1147,7 +1157,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (customId === 'question_delete') {
       const canDel = CLIENT_ROLE_IDS.some(id => interaction.member.roles?.cache?.has(id)) || interaction.user.id === OWNER_ID;
-      if (!canDel) return interaction.reply({ content: " <:ex:1497525479593476197> No permission.", ephemeral: true });
+      if (!canDel) return interaction.reply({ content: "<:cross:1479512858256478521> No permission.", ephemeral: true });
       await interaction.message.delete().catch(() => null);
       return;
     }
@@ -1160,7 +1170,7 @@ client.on('interactionCreate', async (interaction) => {
     // ── /eval ──
     if (interaction.commandName === 'eval') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: ' <:ex:1497525479593476197> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
       try {
         let result = eval(interaction.options.getString('code'));
@@ -1197,7 +1207,7 @@ client.on('interactionCreate', async (interaction) => {
     // ── /embed ──
     } else if (interaction.commandName === 'embed') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: ' <:ex:1497525479593476197> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
       const ch         = interaction.options.getChannel('channel');
       const content    = interaction.options.getString('content') ?? undefined;
@@ -1228,7 +1238,7 @@ client.on('interactionCreate', async (interaction) => {
         embeds.push(e);
       }
       if (!content && !embeds.length && !imageUrl)
-        return interaction.editReply({ content: ' <:ex:1497525479593476197> Nothing to send!' });
+        return interaction.editReply({ content: '<:cross:1479512858256478521> Nothing to send!' });
       const components = buttonsRaw ? buildButtonRows(buttonsRaw) : [];
       const files = [];
       if (imageUrl) {
@@ -1237,42 +1247,42 @@ client.on('interactionCreate', async (interaction) => {
           const ext = imageUrl.split('?')[0].split('.').pop().split('/').pop().toLowerCase() || 'png';
           files.push(new AttachmentBuilder(buf, { name: `image.${ext}` }));
         } catch (e) {
-          return interaction.editReply({ content: ` <:ex:1497525479593476197> Failed to download image: \`${e.message}\`` });
+          return interaction.editReply({ content: `<:cross:1479512858256478521> Failed to download image: \`${e.message}\`` });
         }
       }
       try {
         await ch.send({ content, embeds, components, files });
         await interaction.editReply({ content: `<:tick:1479512775440072755> Sent to <#${ch.id}>!` });
       } catch (e) {
-        await interaction.editReply({ content: ` <:ex:1497525479593476197> Failed: \`${e.message}\`` });
+        await interaction.editReply({ content: `<:cross:1479512858256478521> Failed: \`${e.message}\`` });
       }
 
     // ── /verify ──
     } else if (interaction.commandName === 'verify') {
       if (!interaction.member.roles?.cache?.has('1462396655558201365'))
-        return interaction.reply({ content: " <:ex:1497525479593476197> No permission.", ephemeral: true });
+        return interaction.reply({ content: "<:cross:1479512858256478521> No permission.", ephemeral: true });
       const targetUser   = interaction.options.getUser('member');
       const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
       if (!targetMember)
-        return interaction.reply({ content: ' <:ex:1497525479593476197> Member not found.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Member not found.', ephemeral: true });
       try {
         await targetMember.roles.add('1442822567525224448');
         await interaction.reply({ content: `<:tick:1479512775440072755> <@${targetUser.id}> has been verified!` });
       } catch (err) {
-        await interaction.reply({ content: ' <:ex:1497525479593476197> Failed to assign role.', ephemeral: true });
+        await interaction.reply({ content: '<:cross:1479512858256478521> Failed to assign role.', ephemeral: true });
       }
 
     // ── /link ──
     } else if (interaction.commandName === 'link') {
       const entry = LINK_OPTIONS.find(l => l.value === interaction.options.getString('product'));
-      if (!entry) return interaction.reply({ content: ' <:ex:1497525479593476197> Unknown product.', ephemeral: true });
+      if (!entry) return interaction.reply({ content: '<:cross:1479512858256478521> Unknown product.', ephemeral: true });
       const btn = new ButtonBuilder().setLabel(`🔗 ${entry.name}`).setURL(entry.url).setStyle(ButtonStyle.Link);
       await interaction.reply({ content: entry.url, components: [new ActionRowBuilder().addComponents(btn)] });
 
     // ── /tickets ──
     } else if (interaction.commandName === 'tickets') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: ' <:ex:1497525479593476197> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
       const embed = new EmbedBuilder().setColor(EMBED_COLOR).setTitle('Create a Support Ticket')
         .setDescription('To get support, click the corresponding button below.\n\nThis will create a private ticket where our team can assist you directly.\n\nPlease only open a ticket for a valid reason so we can respond quickly and efficiently.');
       const row = new ActionRowBuilder().addComponents(
@@ -1286,7 +1296,7 @@ client.on('interactionCreate', async (interaction) => {
     // ── /question ──
     } else if (interaction.commandName === 'question') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: ' <:ex:1497525479593476197> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
       const embed = new EmbedBuilder().setColor(EMBED_COLOR)
         .setDescription("Have a question but prefer to stay behind the scenes?\n\nYou can submit it anonymously by clicking *\"Submit a Question\"* below.\n\nAll submissions are anonymous, and we'll address them during our weekly calls.");
       const row = new ActionRowBuilder().addComponents(
@@ -1298,31 +1308,31 @@ client.on('interactionCreate', async (interaction) => {
     // ── /add ──
     } else if (interaction.commandName === 'add') {
       const hasRole = CLIENT_ROLE_IDS.some(id => interaction.member.roles?.cache?.has(id)) || interaction.user.id === OWNER_ID;
-      if (!hasRole) return interaction.reply({ content: " <:ex:1497525479593476197> No permission.", ephemeral: true });
+      if (!hasRole) return interaction.reply({ content: "<:cross:1479512858256478521> No permission.", ephemeral: true });
       if (interaction.channel.parentId !== TICKET_CATEGORY_ID)
-        return interaction.reply({ content: ' <:ex:1497525479593476197> Not a ticket channel.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not a ticket channel.', ephemeral: true });
       const targetUser = interaction.options.getUser('user');
       try {
         await interaction.channel.permissionOverwrites.edit(targetUser.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
         await interaction.reply({ content: `<:tick:1479512775440072755> <@${targetUser.id}> added.` });
       } catch (err) {
-        await interaction.reply({ content: ' <:ex:1497525479593476197> Failed.', ephemeral: true });
+        await interaction.reply({ content: '<:cross:1479512858256478521> Failed.', ephemeral: true });
       }
 
     // ── /remove ──
     } else if (interaction.commandName === 'remove') {
       const hasRole = CLIENT_ROLE_IDS.some(id => interaction.member.roles?.cache?.has(id)) || interaction.user.id === OWNER_ID;
-      if (!hasRole) return interaction.reply({ content: " <:ex:1497525479593476197> No permission.", ephemeral: true });
+      if (!hasRole) return interaction.reply({ content: "<:cross:1479512858256478521> No permission.", ephemeral: true });
       if (interaction.channel.parentId !== TICKET_CATEGORY_ID)
-        return interaction.reply({ content: ' <:ex:1497525479593476197> Not a ticket channel.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not a ticket channel.', ephemeral: true });
       const targetUser = interaction.options.getUser('user');
       if (interaction.channel.topic?.endsWith(`:${targetUser.id}`))
-        return interaction.reply({ content: ' <:ex:1497525479593476197> Cannot remove the ticket owner.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Cannot remove the ticket owner.', ephemeral: true });
       try {
         await interaction.channel.permissionOverwrites.edit(targetUser.id, { ViewChannel: false, SendMessages: false, ReadMessageHistory: false });
         await interaction.reply({ content: `<:tick:1479512775440072755> <@${targetUser.id}> removed.` });
       } catch (err) {
-        await interaction.reply({ content: ' <:ex:1497525479593476197> Failed.', ephemeral: true });
+        await interaction.reply({ content: '<:cross:1479512858256478521> Failed.', ephemeral: true });
       }
 
     // ── /achievements ──
@@ -1421,7 +1431,7 @@ client.on('interactionCreate', async (interaction) => {
     // ── /givexp ──
     } else if (interaction.commandName === 'givexp') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: ' <:ex:1497525479593476197> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
       const target = interaction.options.getUser('member');
       const amount = interaction.options.getInteger('amount');
       await grantXP(target.id, amount, interaction.guild, interaction.channel);
@@ -1434,7 +1444,7 @@ client.on('interactionCreate', async (interaction) => {
     // ── /setlevel ──
     } else if (interaction.commandName === 'setlevel') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: ' <:ex:1497525479593476197> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
       const target   = interaction.options.getUser('member');
       const newLevel = interaction.options.getInteger('level');
       const data     = getUserData(target.id);
@@ -1463,7 +1473,7 @@ client.on('interactionCreate', async (interaction) => {
   } catch (err) {
     console.error(`[Command] /${interaction.commandName}:`, err);
     // Interaction may already be expired — try every possible reply method
-    const m = { content: ' <:ex:1497525479593476197> An error occurred.', ephemeral: true };
+    const m = { content: '<:cross:1479512858256478521> An error occurred.', ephemeral: true };
     try {
       if (interaction.deferred || interaction.replied) await interaction.editReply(m);
       else await interaction.reply(m);
