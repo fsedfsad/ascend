@@ -1086,7 +1086,7 @@ async function closeTicket(interaction) {
   if (!canClose)
     return interaction.reply({ content: "<:cross:1479512858256478521> You don't have permission to close tickets.", ephemeral: true });
 
-  await interaction.reply({ content: '<:loading:1479510452215218197> Closing in 5 seconds…' });
+  await interaction.reply({ content: '<a:loading:1479510452215218197> Closing in 5 seconds…' });
   setTimeout(() => ch.delete().catch(err => console.error('[Ticket] Close error:', err)), 5000);
 }
 
