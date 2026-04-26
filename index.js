@@ -1,20 +1,3 @@
-// ─── DEBUG: log every require so we can pinpoint a crash ──────────────────────
-console.log('[DEBUG] Process starting...');
-console.log('[DEBUG] Node version:', process.version);
-console.log('[DEBUG] Platform:', process.platform, process.arch);
-
-try { require('dotenv').config(); console.log('[DEBUG] dotenv OK'); }
-catch(e) { console.error('[DEBUG] dotenv FAILED:', e.message); process.exit(1); }
-
-try { require('discord.js'); console.log('[DEBUG] discord.js OK'); }
-catch(e) { console.error('[DEBUG] discord.js FAILED:', e.message); process.exit(1); }
-
-try { require('@napi-rs/canvas'); console.log('[DEBUG] @napi-rs/canvas OK'); }
-catch(e) { console.error('[DEBUG] @napi-rs/canvas FAILED:', e.message); process.exit(1); }
-
-console.log('[DEBUG] All requires passed, loading app...');
-// ──────────────────────────────────────────────────────────────────────────────
-
 require('dotenv').config();
 const {
   Client,
@@ -181,113 +164,92 @@ function calculateMessageXP(content) {
   return base + lengthBonus;
 }
 
-// ─── DATA PERSISTENCE — JSONBin.io (free, no disk needed) ─────────────────────
+// ─── DATA PERSISTENCE — MongoDB ────────────────────────────────────────────────────────────────────────────────────────
 //
-//  Sign up free at https://jsonbin.io → grab your Master Key
-//  Create TWO bins (one for XP, one for achievements) → grab both Bin IDs
-//  Set these 3 env vars in Render:
-//    JSONBIN_KEY   = your Master Key  (e.g. $2a$10$abc...)
-//    XP_BIN_ID     = bin ID for XP data  (e.g. 64af1234abc...)
-//    ACH_BIN_ID    = bin ID for achievements (e.g. 64af5678def...)
+//  1. Go to https://mongodb.com → create a free M0 cluster
+//  2. Create a database called "ascend" with a collection called "users"
+//  3. Network Access → allow 0.0.0.0/0 (or Render’s IP)
+//  4. Get your connection string and set this env var in Render:
+//       MONGODB_URI = mongodb+srv://user:pass@cluster.mongodb.net/ascend
 //
-const JSONBIN_KEY  = process.env.JSONBIN_KEY  || '';
-const XP_BIN_ID   = process.env.XP_BIN_ID    || '';
-const ACH_BIN_ID  = process.env.ACH_BIN_ID   || '';
-const JSONBIN_BASE = 'api.jsonbin.io';
+const { MongoClient } = require('mongodb');
 
-if (!JSONBIN_KEY || !XP_BIN_ID || !ACH_BIN_ID) {
-  console.warn('┌─────────────────────────────────────────────────────────┐');
-  console.warn('│  WARNING: JSONBin env vars not set!                     │');
-  console.warn('│  Set JSONBIN_KEY, XP_BIN_ID, ACH_BIN_ID in Render.     │');
-  console.warn('│  Data will NOT persist across restarts until you do.    │');
-  console.warn('└─────────────────────────────────────────────────────────┘');
+const MONGODB_URI = process.env.MONGODB_URI || '';
+
+if (!MONGODB_URI) {
+  console.warn('WARNING: MONGODB_URI not set — data will not persist across restarts!');
 }
 
-// Low-level JSONBin GET/PUT
-function jsonbinGet(binId) {
-  return new Promise((resolve) => {
-    const options = {
-      hostname: JSONBIN_BASE,
-      path: `/v3/b/${binId}/latest`,
-      method: 'GET',
-      headers: { 'X-Master-Key': JSONBIN_KEY },
-    };
-    const req = https.request(options, (res) => {
-      let body = '';
-      res.on('data', d => body += d);
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(body);
-          resolve(parsed?.record ?? null);
-        } catch { resolve(null); }
-      });
+let db = null;
+let usersCol = null;
+
+async function connectDB() {
+  if (!MONGODB_URI) return;
+  try {
+    const client = new MongoClient(MONGODB_URI, {
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 10000,
     });
-    req.setTimeout(8000, () => { req.destroy(); resolve(null); });
-    req.on('error', () => resolve(null));
-    req.end();
-  });
-}
-
-function jsonbinPut(binId, data) {
-  return new Promise((resolve) => {
-    const body = JSON.stringify(data);
-    const options = {
-      hostname: JSONBIN_BASE,
-      path: `/v3/b/${binId}`,
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-        'X-Master-Key': JSONBIN_KEY,
-        'X-Bin-Versioning': 'true', // don't keep old versions, saves quota
-      },
-    };
-    const req = https.request(options, (res) => {
-      let out = '';
-      res.on('data', d => out += d);
-      res.on('end', () => resolve(true));
-    });
-    req.setTimeout(8000, () => { req.destroy(); resolve(false); });
-    req.on('error', () => resolve(false));
-    req.write(body);
-    req.end();
-  });
-}
-
-// ── XP DATA ────────────────────────────────────────────────────────────────────
-let xpData = {};
-let _xpSaveTimer = null;
-let _xpLoaded = false;
-
-async function loadXpData() {
-  if (!XP_BIN_ID) { console.log('[XP] No XP_BIN_ID — starting fresh (not persisted)'); _xpLoaded = true; return; }
-  console.log('[XP] Loading from JSONBin...');
-  const record = await jsonbinGet(XP_BIN_ID);
-  if (record && typeof record === 'object' && Object.keys(record).length > 0) {
-    xpData = record;
-    _xpLoaded = true;
-    console.log(`[XP] Loaded ${Object.keys(xpData).length} users`);
-  } else if (record && typeof record === 'object') {
-    // Bin exists but is empty — safe to treat as fresh
-    _xpLoaded = true;
-    console.log('[XP] Bin is empty — starting fresh');
-  } else {
-    // Null response = network/timeout issue — do NOT mark as loaded, block saves
-    console.error('[XP] Failed to load from JSONBin — saves blocked until next restart to protect data');
+    await client.connect();
+    db = client.db('ascend');
+    usersCol = db.collection('users');
+    // Index on userId for fast lookups
+    await usersCol.createIndex({ userId: 1 }, { unique: true });
+    console.log('connected to mongodb');
+  } catch (err) {
+    console.error('mongodb connection failed:', err.message);
   }
 }
 
+// ── XP DATA ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// In-memory cache so every XP gain doesn't hit the DB
+let xpData = {};
+let _xpLoaded = false;
+
+async function loadXpData() {
+  if (!usersCol) { _xpLoaded = true; return; }
+  try {
+    const docs = await usersCol.find({}).toArray();
+    for (const doc of docs) {
+      xpData[doc.userId] = { xp: doc.xp || 0, level: doc.level || 0 };
+    }
+    _xpLoaded = true;
+    console.log(`loaded ${docs.length} users from mongodb`);
+  } catch (err) {
+    console.error('failed to load xp data:', err.message);
+    // Don't set _xpLoaded — block saves until we have real data
+  }
+}
+
+// Debounced per-user save — batches rapid XP gains, saves each user individually
+const _xpSaveTimers = new Map();
+
+function saveUserXP(userId) {
+  if (!usersCol) return;
+  if (!_xpLoaded) { console.warn('xp save blocked — not loaded yet'); return; }
+  if (_xpSaveTimers.has(userId)) clearTimeout(_xpSaveTimers.get(userId));
+  _xpSaveTimers.set(userId, setTimeout(async () => {
+    _xpSaveTimers.delete(userId);
+    const data = xpData[userId];
+    if (!data) return;
+    try {
+      await usersCol.updateOne(
+        { userId },
+        { $set: { userId, xp: data.xp, level: data.level, updatedAt: new Date() } },
+        { upsert: true }
+      );
+    } catch (err) {
+      console.error(`failed to save xp for ${userId}:`, err.message);
+    }
+  }, 5000)); // 5s debounce per user
+}
+
+// Keep saveXpData as an alias so existing calls still work
 function saveXpData() {
-  if (!XP_BIN_ID) return;
-  if (!_xpLoaded) { console.warn('[XP] Save blocked — data not loaded yet'); return; }
-  if (Object.keys(xpData).length === 0) { console.warn('[XP] Save blocked — xpData is empty, refusing to overwrite'); return; }
-  // Debounce — wait 10 s after last change before writing, to batch rapid XP gains
-  if (_xpSaveTimer) clearTimeout(_xpSaveTimer);
-  _xpSaveTimer = setTimeout(async () => {
-    const ok = await jsonbinPut(XP_BIN_ID, xpData);
-    if (ok) console.log(`[XP] Saved ${Object.keys(xpData).length} users to JSONBin`);
-    else    console.error('[XP] Save failed — will retry on next change');
-  }, 10_000);
+  // Called after a bulk operation (e.g. setlevel/givexp) — save all dirty users
+  for (const userId of Object.keys(xpData)) {
+    saveUserXP(userId);
+  }
 }
 
 function getUserData(userId) {
@@ -295,7 +257,7 @@ function getUserData(userId) {
   return xpData[userId];
 }
 
-// ─── ACHIEVEMENTS ──────────────────────────────────────────────────────────────
+// ─── ACHIEVEMENTS ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
 // { id, emoji, name, description, trigger }
 // triggers checked in code by id
 const ACHIEVEMENTS = [
@@ -322,33 +284,37 @@ const CHANNEL_ACHIEVEMENTS = {
 // Thread category for Thread Master achievement
 const THREAD_ACHIEVEMENT_CATEGORY = '1471066298703282238';
 
-// ── ACHIEVEMENT DATA ────────────────────────────────────────────────────────────
-let achData = {}; // { [userId]: Set of achievement ids }
-let _achSaveTimer = null;
+// ── ACHIEVEMENT DATA ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Stored in MongoDB on the same user document as XP
+// achData is a local cache: { [userId]: Set of achievement ids }
+let achData = {};
 
 async function loadAchData() {
-  if (!ACH_BIN_ID) { console.log('[ACH] No ACH_BIN_ID — starting fresh (not persisted)'); return; }
-  console.log('[ACH] Loading from JSONBin...');
-  const record = await jsonbinGet(ACH_BIN_ID);
-  if (record && typeof record === 'object') {
-    for (const [uid, ids] of Object.entries(record))
-      achData[uid] = new Set(Array.isArray(ids) ? ids : []);
-    console.log(`[ACH] Loaded achievements for ${Object.keys(achData).length} users`);
-  } else {
-    console.log('[ACH] No existing data — starting fresh');
+  if (!usersCol) return;
+  try {
+    const docs = await usersCol.find({ achievements: { $exists: true } }).toArray();
+    for (const doc of docs) {
+      achData[doc.userId] = new Set(Array.isArray(doc.achievements) ? doc.achievements : []);
+    }
+    console.log(`loaded achievements for ${docs.length} users`);
+  } catch (err) {
+    console.error('failed to load achievement data:', err.message);
   }
 }
 
-function saveAchData() {
-  if (!ACH_BIN_ID) return;
-  if (_achSaveTimer) clearTimeout(_achSaveTimer);
-  _achSaveTimer = setTimeout(async () => {
-    const out = {};
-    for (const [uid, set] of Object.entries(achData)) out[uid] = [...set];
-    const ok = await jsonbinPut(ACH_BIN_ID, out);
-    if (ok) console.log('[ACH] Saved to JSONBin');
-    else    console.error('[ACH] Save failed');
-  }, 10_000);
+async function saveAchData(userId) {
+  if (!usersCol) return;
+  const set = achData[userId];
+  if (!set) return;
+  try {
+    await usersCol.updateOne(
+      { userId },
+      { $set: { userId, achievements: [...set], updatedAt: new Date() } },
+      { upsert: true }
+    );
+  } catch (err) {
+    console.error(`failed to save achievements for ${userId}:`, err.message);
+  }
 }
 
 function getUserAch(userId) {
@@ -361,7 +327,7 @@ async function grantAchievement(userId, achId, guild) {
   const set = getUserAch(userId);
   if (set.has(achId)) return false;
   set.add(achId);
-  saveAchData();
+  await saveAchData(userId); // save immediately, achievements are rare
 
   const ach = ACHIEVEMENTS.find(a => a.id === achId);
   if (!ach) return true;
@@ -732,7 +698,8 @@ function downloadBuffer(url) {
 client.once('ready', async () => {
   console.log(`[Bot] Logged in as ${client.user.tag}`);
 
-  // Load persisted data first — everything else depends on this
+  // Connect to MongoDB and load all data before doing anything else
+  await connectDB();
   await loadXpData();
   await loadAchData();
 
@@ -988,7 +955,7 @@ async function grantXP(userId, amount, guild, notifyChannel) {
   data.xp      = (data.xp || 0) + amount;
   const after  = parseLevelData(data.xp);
   data.level   = after.level;
-  saveXpData();
+  saveUserXP(userId); // only save this one user, not everyone
 
   if (after.level > before.level) {
     for (let lvl = before.level + 1; lvl <= after.level; lvl++) {
@@ -1081,7 +1048,7 @@ async function createTicket(interaction, type) {
     c => c.parentId === TICKET_CATEGORY_ID && c.topic && c.topic.endsWith(`:${member.user.id}`)
   );
   if (existing)
-    return interaction.reply({ content: `<:ex:1497525479593476197> You already have an open ticket: <#${existing.id}>`, ephemeral: true });
+    return interaction.reply({ content: `<:cross:1479512858256478521> You already have an open ticket: <#${existing.id}>`, ephemeral: true });
 
   await interaction.deferReply({ ephemeral: true });
   try {
@@ -1103,23 +1070,23 @@ async function createTicket(interaction, type) {
     );
     const msg = await ch.send({ content: `<@${member.user.id}>`, embeds: [embed], components: [row] });
     await msg.pin().catch(() => null);
-    await interaction.editReply({ content: `<:tick:1497525507015708692> Your ticket has been created: <#${ch.id}>` });
+    await interaction.editReply({ content: `<:tick:1479512775440072755> Your ticket has been created: <#${ch.id}>` });
   } catch (err) {
     console.error('[Ticket] Create error:', err);
-    await interaction.editReply({ content: '<:ex:1497525479593476197> Failed to create ticket.' });
+    await interaction.editReply({ content: '<:cross:1479512858256478521> Failed to create ticket.' });
   }
 }
 
 async function closeTicket(interaction) {
   const ch = interaction.channel;
   if (ch.parentId !== TICKET_CATEGORY_ID)
-    return interaction.reply({ content: '<:ex:1497525479593476197> Not a ticket channel.', ephemeral: true });
+    return interaction.reply({ content: '<:cross:1479512858256478521> Not a ticket channel.', ephemeral: true });
 
   const canClose = interaction.member.roles?.cache?.has(TICKET_CLOSE_ROLE_ID) || interaction.user.id === OWNER_ID;
   if (!canClose)
-    return interaction.reply({ content: "<:ex:1497525479593476197> You don't have permission to close tickets.", ephemeral: true });
+    return interaction.reply({ content: "<:cross:1479512858256478521> You don't have permission to close tickets.", ephemeral: true });
 
-  await interaction.reply({ content: '<a:loading:1479510452215218197> Closing in 5 seconds…' });
+  await interaction.reply({ content: '<:loading:1479510452215218197> Closing in 5 seconds…' });
   setTimeout(() => ch.delete().catch(err => console.error('[Ticket] Close error:', err)), 5000);
 }
 
@@ -1133,16 +1100,16 @@ client.on('interactionCreate', async (interaction) => {
       try {
         const inboxCh = await client.channels.fetch(QUESTIONS_INBOX_CHANNEL_ID).catch(() => null);
         if (!inboxCh)
-          return interaction.reply({ content: '<:ex:1497525479593476197> Questions channel not found.', ephemeral: true });
+          return interaction.reply({ content: '<:cross:1479512858256478521> Questions channel not found.', ephemeral: true });
         const embed = new EmbedBuilder().setColor(EMBED_COLOR).setTitle('Anonymous Question').setDescription(text).setTimestamp();
         const delRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('question_delete').setLabel('✕').setStyle(ButtonStyle.Danger)
         );
         await inboxCh.send({ embeds: [embed], components: [delRow] });
-        await interaction.reply({ content: '<:tick:1497525507015708692> Your question has been submitted anonymously!', ephemeral: true });
+        await interaction.reply({ content: '<:tick:1479512775440072755> Your question has been submitted anonymously!', ephemeral: true });
       } catch (err) {
         console.error('[Question] Submit error:', err);
-        await interaction.reply({ content: '<:ex:1497525479593476197> Failed to submit.', ephemeral: true });
+        await interaction.reply({ content: '<:cross:1479512858256478521> Failed to submit.', ephemeral: true });
       }
     }
     return;
@@ -1165,7 +1132,7 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (customId === 'question_delete') {
       const canDel = CLIENT_ROLE_IDS.some(id => interaction.member.roles?.cache?.has(id)) || interaction.user.id === OWNER_ID;
-      if (!canDel) return interaction.reply({ content: "<:ex:1497525479593476197> No permission.", ephemeral: true });
+      if (!canDel) return interaction.reply({ content: "<:cross:1479512858256478521> No permission.", ephemeral: true });
       await interaction.message.delete().catch(() => null);
       return;
     }
@@ -1178,7 +1145,7 @@ client.on('interactionCreate', async (interaction) => {
     // ── /eval ──
     if (interaction.commandName === 'eval') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: '<:ex:1497525479593476197> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
       try {
         let result = eval(interaction.options.getString('code'));
@@ -1215,7 +1182,7 @@ client.on('interactionCreate', async (interaction) => {
     // ── /embed ──
     } else if (interaction.commandName === 'embed') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: '<:ex:1497525479593476197> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
       const ch         = interaction.options.getChannel('channel');
       const content    = interaction.options.getString('content') ?? undefined;
@@ -1246,7 +1213,7 @@ client.on('interactionCreate', async (interaction) => {
         embeds.push(e);
       }
       if (!content && !embeds.length && !imageUrl)
-        return interaction.editReply({ content: '<:ex:1497525479593476197> Nothing to send!' });
+        return interaction.editReply({ content: '<:cross:1479512858256478521> Nothing to send!' });
       const components = buttonsRaw ? buildButtonRows(buttonsRaw) : [];
       const files = [];
       if (imageUrl) {
@@ -1255,42 +1222,42 @@ client.on('interactionCreate', async (interaction) => {
           const ext = imageUrl.split('?')[0].split('.').pop().split('/').pop().toLowerCase() || 'png';
           files.push(new AttachmentBuilder(buf, { name: `image.${ext}` }));
         } catch (e) {
-          return interaction.editReply({ content: `<:ex:1497525479593476197> Failed to download image: \`${e.message}\`` });
+          return interaction.editReply({ content: `<:cross:1479512858256478521> Failed to download image: \`${e.message}\`` });
         }
       }
       try {
         await ch.send({ content, embeds, components, files });
-        await interaction.editReply({ content: `<:tick:1497525507015708692> Sent to <#${ch.id}>!` });
+        await interaction.editReply({ content: `<:tick:1479512775440072755> Sent to <#${ch.id}>!` });
       } catch (e) {
-        await interaction.editReply({ content: `<:ex:1497525479593476197> Failed: \`${e.message}\`` });
+        await interaction.editReply({ content: `<:cross:1479512858256478521> Failed: \`${e.message}\`` });
       }
 
     // ── /verify ──
     } else if (interaction.commandName === 'verify') {
       if (!interaction.member.roles?.cache?.has('1462396655558201365'))
-        return interaction.reply({ content: "<:ex:1497525479593476197> No permission.", ephemeral: true });
+        return interaction.reply({ content: "<:cross:1479512858256478521> No permission.", ephemeral: true });
       const targetUser   = interaction.options.getUser('member');
       const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
       if (!targetMember)
-        return interaction.reply({ content: '<:ex:1497525479593476197> Member not found.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Member not found.', ephemeral: true });
       try {
         await targetMember.roles.add('1442822567525224448');
-        await interaction.reply({ content: `<:tick:1497525507015708692> <@${targetUser.id}> has been verified!` });
+        await interaction.reply({ content: `<:tick:1479512775440072755> <@${targetUser.id}> has been verified!` });
       } catch (err) {
-        await interaction.reply({ content: '<:ex:1497525479593476197> Failed to assign role.', ephemeral: true });
+        await interaction.reply({ content: '<:cross:1479512858256478521> Failed to assign role.', ephemeral: true });
       }
 
     // ── /link ──
     } else if (interaction.commandName === 'link') {
       const entry = LINK_OPTIONS.find(l => l.value === interaction.options.getString('product'));
-      if (!entry) return interaction.reply({ content: '<:ex:1497525479593476197> Unknown product.', ephemeral: true });
+      if (!entry) return interaction.reply({ content: '<:cross:1479512858256478521> Unknown product.', ephemeral: true });
       const btn = new ButtonBuilder().setLabel(`🔗 ${entry.name}`).setURL(entry.url).setStyle(ButtonStyle.Link);
       await interaction.reply({ content: entry.url, components: [new ActionRowBuilder().addComponents(btn)] });
 
     // ── /tickets ──
     } else if (interaction.commandName === 'tickets') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: '<:ex:1497525479593476197> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
       const embed = new EmbedBuilder().setColor(EMBED_COLOR).setTitle('Create a Support Ticket')
         .setDescription('To get support, click the corresponding button below.\n\nThis will create a private ticket where our team can assist you directly.\n\nPlease only open a ticket for a valid reason so we can respond quickly and efficiently.');
       const row = new ActionRowBuilder().addComponents(
@@ -1299,48 +1266,48 @@ client.on('interactionCreate', async (interaction) => {
         new ButtonBuilder().setCustomId('ticket_questions').setLabel('❓ Questions').setStyle(ButtonStyle.Secondary),
       );
       await interaction.channel.send({ embeds: [embed], components: [row] });
-      await interaction.reply({ content: '<:tick:1497525507015708692> Ticket panel sent.', ephemeral: true });
+      await interaction.reply({ content: '<:tick:1479512775440072755> Ticket panel sent.', ephemeral: true });
 
     // ── /question ──
     } else if (interaction.commandName === 'question') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: '<:ex:1497525479593476197> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
       const embed = new EmbedBuilder().setColor(EMBED_COLOR)
         .setDescription("Have a question but prefer to stay behind the scenes?\n\nYou can submit it anonymously by clicking *\"Submit a Question\"* below.\n\nAll submissions are anonymous, and we'll address them during our weekly calls.");
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('submit_question').setLabel('Submit a Question').setStyle(ButtonStyle.Secondary)
       );
       await interaction.channel.send({ embeds: [embed], components: [row] });
-      await interaction.reply({ content: '<:tick:1497525507015708692> Question panel sent.', ephemeral: true });
+      await interaction.reply({ content: '<:tick:1479512775440072755> Question panel sent.', ephemeral: true });
 
     // ── /add ──
     } else if (interaction.commandName === 'add') {
       const hasRole = CLIENT_ROLE_IDS.some(id => interaction.member.roles?.cache?.has(id)) || interaction.user.id === OWNER_ID;
-      if (!hasRole) return interaction.reply({ content: "<:ex:1497525479593476197> No permission.", ephemeral: true });
+      if (!hasRole) return interaction.reply({ content: "<:cross:1479512858256478521> No permission.", ephemeral: true });
       if (interaction.channel.parentId !== TICKET_CATEGORY_ID)
-        return interaction.reply({ content: '<:ex:1497525479593476197> Not a ticket channel.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not a ticket channel.', ephemeral: true });
       const targetUser = interaction.options.getUser('user');
       try {
         await interaction.channel.permissionOverwrites.edit(targetUser.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
-        await interaction.reply({ content: `<:tick:1497525507015708692> <@${targetUser.id}> added.` });
+        await interaction.reply({ content: `<:tick:1479512775440072755> <@${targetUser.id}> added.` });
       } catch (err) {
-        await interaction.reply({ content: '<:ex:1497525479593476197> Failed.', ephemeral: true });
+        await interaction.reply({ content: '<:cross:1479512858256478521> Failed.', ephemeral: true });
       }
 
     // ── /remove ──
     } else if (interaction.commandName === 'remove') {
       const hasRole = CLIENT_ROLE_IDS.some(id => interaction.member.roles?.cache?.has(id)) || interaction.user.id === OWNER_ID;
-      if (!hasRole) return interaction.reply({ content: "<:ex:1497525479593476197> No permission.", ephemeral: true });
+      if (!hasRole) return interaction.reply({ content: "<:cross:1479512858256478521> No permission.", ephemeral: true });
       if (interaction.channel.parentId !== TICKET_CATEGORY_ID)
-        return interaction.reply({ content: '<:ex:1497525479593476197> Not a ticket channel.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not a ticket channel.', ephemeral: true });
       const targetUser = interaction.options.getUser('user');
       if (interaction.channel.topic?.endsWith(`:${targetUser.id}`))
-        return interaction.reply({ content: '<:ex:1497525479593476197> Cannot remove the ticket owner.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Cannot remove the ticket owner.', ephemeral: true });
       try {
         await interaction.channel.permissionOverwrites.edit(targetUser.id, { ViewChannel: false, SendMessages: false, ReadMessageHistory: false });
-        await interaction.reply({ content: `<:tick:1497525507015708692> <@${targetUser.id}> removed.` });
+        await interaction.reply({ content: `<:tick:1479512775440072755> <@${targetUser.id}> removed.` });
       } catch (err) {
-        await interaction.reply({ content: '<:ex:1497525479593476197> Failed.', ephemeral: true });
+        await interaction.reply({ content: '<:cross:1479512858256478521> Failed.', ephemeral: true });
       }
 
     // ── /achievements ──
@@ -1439,20 +1406,20 @@ client.on('interactionCreate', async (interaction) => {
     // ── /givexp ──
     } else if (interaction.commandName === 'givexp') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: '<:ex:1497525479593476197> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
       const target = interaction.options.getUser('member');
       const amount = interaction.options.getInteger('amount');
       await grantXP(target.id, amount, interaction.guild, interaction.channel);
       const { level } = parseLevelData(getUserData(target.id).xp || 0);
       await interaction.reply({
-        content: `<:tick:1497525507015708692> Gave **${amount} XP** to <@${target.id}>. Now level **${level}** (${(getUserData(target.id).xp||0).toLocaleString()} XP).`,
+        content: `<:tick:1479512775440072755> Gave **${amount} XP** to <@${target.id}>. Now level **${level}** (${(getUserData(target.id).xp||0).toLocaleString()} XP).`,
         ephemeral: true,
       });
 
     // ── /setlevel ──
     } else if (interaction.commandName === 'setlevel') {
       if (interaction.user.id !== OWNER_ID)
-        return interaction.reply({ content: '<:ex:1497525479593476197> Not authorised.', ephemeral: true });
+        return interaction.reply({ content: '<:cross:1479512858256478521> Not authorised.', ephemeral: true });
       const target   = interaction.options.getUser('member');
       const newLevel = interaction.options.getInteger('level');
       const data     = getUserData(target.id);
@@ -1473,7 +1440,7 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       await interaction.reply({
-        content: `<:tick:1497525507015708692> Set <@${target.id}>'s level to **${newLevel}** (was ${oldLevel}). XP: **${data.xp.toLocaleString()}**.`,
+        content: `<:tick:1479512775440072755> Set <@${target.id}>'s level to **${newLevel}** (was ${oldLevel}). XP: **${data.xp.toLocaleString()}**.`,
         ephemeral: true,
       });
     }
@@ -1481,7 +1448,7 @@ client.on('interactionCreate', async (interaction) => {
   } catch (err) {
     console.error(`[Command] /${interaction.commandName}:`, err);
     // Interaction may already be expired — try every possible reply method
-    const m = { content: '<:ex:1497525479593476197> An error occurred.', ephemeral: true };
+    const m = { content: '<:cross:1479512858256478521> An error occurred.', ephemeral: true };
     try {
       if (interaction.deferred || interaction.replied) await interaction.editReply(m);
       else await interaction.reply(m);
@@ -1495,37 +1462,20 @@ process.on('unhandledRejection', err => console.error('[Unhandled]', err));
 process.on('uncaughtException',  err => console.error('[Uncaught]',  err));
 
 // ─── LOGIN ─────────────────────────────────────────────────────────────────────
-console.log('━━━ Ascend Bot startup ━━━');
-console.log('  NODE_ENV:      ', process.env.NODE_ENV || '(not set)');
-console.log('  TOKEN set:     ', !!process.env.DISCORD_TOKEN);
-console.log('  TOKEN prefix:  ', process.env.DISCORD_TOKEN ? process.env.DISCORD_TOKEN.slice(0, 10) + '...' : 'N/A');
-console.log('  CLIENT_ID:     ', process.env.CLIENT_ID || '(not set)');
-console.log('  GUILD_ID:      ', process.env.GUILD_ID  || '(not set — global cmds)');
-console.log('  JSONBIN_KEY:   ', JSONBIN_KEY  ? '✓ set' : '✗ MISSING');
-console.log('  XP_BIN_ID:     ', XP_BIN_ID   ? '✓ set' : '✗ MISSING');
-console.log('  ACH_BIN_ID:    ', ACH_BIN_ID  ? '✓ set' : '✗ MISSING');
-console.log('━━━━━━━━━━━━━━━━━━━━━━━━');
-
 if (!process.env.DISCORD_TOKEN) {
-  console.error('[Bot] DISCORD_TOKEN not set — exiting');
+  console.error('no token found, set DISCORD_TOKEN in your env vars');
   process.exit(1);
 }
 
-// Rate limit logging
-client.rest.on('rateLimited', info => {
-  console.warn('[RATE LIMITED]', JSON.stringify(info));
-});
+console.log('token:', process.env.DISCORD_TOKEN.slice(0, 10) + '...');
+console.log('mongodb:', MONGODB_URI ? 'configured' : 'NOT SET — data will not persist');
 
-client.on('error', err => console.error('[Client error]', err));
-client.on('warn',  msg => console.warn('[Client warn]',  msg));
-client.on('shardError', err => console.error('[Shard error]', err));
+client.rest.on('rateLimited', info => console.warn('rate limited:', info.route, `retry in ${info.timeToReset}ms`));
+client.on('warn', msg => console.warn('warning:', msg));
 
-console.log('[Bot] Calling client.login()...');
 client.login(process.env.DISCORD_TOKEN)
-  .then(() => console.log('[Bot] client.login() resolved OK'))
+  .then(() => console.log('logged in'))
   .catch(err => {
-    console.error('[Bot] Login FAILED:', err.message);
-    console.error('[Bot] Error code:', err.code);
-    console.error('[Bot] Full error:', err);
+    console.error('login failed:', err.message, `(code: ${err.code})`);
     process.exit(1);
   });
