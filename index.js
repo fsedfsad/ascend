@@ -184,20 +184,26 @@ let db = null;
 let usersCol = null;
 
 async function connectDB() {
-  if (!MONGODB_URI) return;
+  if (!MONGODB_URI) { console.error('MONGODB_URI is not set!'); return; }
+  console.log('connecting to mongodb...');
+  console.log('uri (masked):', MONGODB_URI.replace(/:([^@]+)@/, ':****@'));
   try {
-    const client = new MongoClient(MONGODB_URI, {
+    const mongoClient = new MongoClient(MONGODB_URI, {
       serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 10000,
     });
-    await client.connect();
-    db = client.db('ascend');
+    await mongoClient.connect();
+    console.log('mongodb client connected');
+    db = mongoClient.db('ascend');
+    console.log('using database: ascend');
     usersCol = db.collection('users');
-    // Index on userId for fast lookups
+    console.log('using collection: users');
     await usersCol.createIndex({ userId: 1 }, { unique: true });
-    console.log('connected to mongodb');
+    const count = await usersCol.countDocuments();
+    console.log(`mongodb ready — ${count} documents in users collection`);
   } catch (err) {
     console.error('mongodb connection failed:', err.message);
+    console.error('full error:', err);
   }
 }
 
@@ -207,17 +213,19 @@ let xpData = {};
 let _xpLoaded = false;
 
 async function loadXpData() {
-  if (!usersCol) { _xpLoaded = true; return; }
+  if (!usersCol) { console.warn('loadXpData: usersCol is null — db not connected'); _xpLoaded = true; return; }
+  console.log('loading xp data from mongodb...');
   try {
     const docs = await usersCol.find({}).toArray();
+    console.log(`loadXpData: got ${docs.length} raw docs from mongodb`);
     for (const doc of docs) {
       xpData[doc.userId] = { xp: doc.xp || 0, level: doc.level || 0 };
     }
     _xpLoaded = true;
-    console.log(`loaded ${docs.length} users from mongodb`);
+    console.log(`xp data loaded — ${Object.keys(xpData).length} users in memory`);
   } catch (err) {
     console.error('failed to load xp data:', err.message);
-    // Don't set _xpLoaded — block saves until we have real data
+    console.error('full error:', err);
   }
 }
 
@@ -233,13 +241,16 @@ function saveUserXP(userId) {
     const data = xpData[userId];
     if (!data) return;
     try {
-      await usersCol.updateOne(
+      console.log(`saving xp for ${userId}: xp=${data.xp} level=${data.level}`);
+      const result = await usersCol.updateOne(
         { userId },
         { $set: { userId, xp: data.xp, level: data.level, updatedAt: new Date() } },
         { upsert: true }
       );
+      console.log(`saved ${userId} — matched:${result.matchedCount} modified:${result.modifiedCount} upserted:${result.upsertedCount}`);
     } catch (err) {
       console.error(`failed to save xp for ${userId}:`, err.message);
+      console.error('full error:', err);
     }
   }, 5000)); // 5s debounce per user
 }
@@ -1086,7 +1097,7 @@ async function closeTicket(interaction) {
   if (!canClose)
     return interaction.reply({ content: "<:cross:1479512858256478521> You don't have permission to close tickets.", ephemeral: true });
 
-  await interaction.reply({ content: '<a:loading:1479510452215218197> Closing in 5 seconds…' });
+  await interaction.reply({ content: '<:loading:1479510452215218197> Closing in 5 seconds…' });
   setTimeout(() => ch.delete().catch(err => console.error('[Ticket] Close error:', err)), 5000);
 }
 
