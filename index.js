@@ -809,6 +809,7 @@ client.once('ready', async () => {
         fetched = await ch.messages.fetch({ limit: 100 });
         for (const [, m] of fetched.filter(m => m.author.id === client.user.id))
           await m.delete().catch(() => null);
+        if (fetched.size === 100) await new Promise(r => setTimeout(r, 1500));
       } while (fetched.size === 100);
       const embed = new EmbedBuilder().setColor(EMBED_COLOR).setTitle(cfg.title).setDescription(cfg.description);
       const sent = await ch.send({ embeds: [embed] });
